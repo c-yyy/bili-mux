@@ -38,16 +38,18 @@ function getFFmpeg() {
       // "Cannot call unknown function proxy_main"。显式指定 mainName 让 cwrap 调到 _main。
       mainName: 'main',
       log: true,
-      // 捕获 ffmpeg 内部日志，失败时一并回传给 content 便于定位
-      logger: ({ message }) => {
-        _logBuf.push(message);
-        if (_logBuf.length > 80) _logBuf.shift();
-      },
       progress: (ratio) => {
         if (_replyTo != null) {
           chrome.runtime.sendMessage({ type: 'bili-mux-progress', replyTo: _replyTo, ratio }).catch(() => {});
         }
       }
+    });
+    // 注意：0.11 包装层 createFFmpeg 的 logger 选项会被静默丢弃
+    // （minified 代码里是逗号表达式 (t.logger, t.progress)，logger 从未赋给内部处理器），
+    // 必须通过 setLogger() 注册才能真正捕获 fferr/ffout，否则失败时拿不到任何 ffmpeg 日志。
+    inst.setLogger(({ message }) => {
+      _logBuf.push(message);
+      if (_logBuf.length > 80) _logBuf.shift();
     });
     console.log('[ffmpeg] createFFmpeg 已构造，开始 load()…');
     await inst.load();
@@ -95,7 +97,9 @@ async function mux(videoBuf, audioBuf) {
   try { size = ff.FS('stat', 'out.mp4').size; } catch (e) { size = 0; }
   if (!size) {
     const tail = _logBuf.slice(-25).join('\n');
-    throw new Error('ffmpeg 未生成 out.mp4（合成失败）。ffmpeg 日志：\n' + (tail || '(无日志，请确认核心已正常加载)'));
+    let dir = '';
+    try { dir = 'MEMFS 根目录: ' + ff.FS('readdir', '/').join(', '); } catch (e) {}
+    throw new Error('ffmpeg 未生成 out.mp4（合成失败）。' + dir + '\nffmpeg 日志：\n' + (tail || '(无日志，请确认核心已正常加载)'));
   }
   const data = ff.FS('readFile', 'out.mp4'); // Uint8Array
   console.log('[ffmpeg] 合成完成，out.mp4 =', data.length, '字节');
