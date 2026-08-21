@@ -1,0 +1,104 @@
+:root {
+  --pink: #fb7299;
+  --pink-d: #d85f82;
+  --ink: #1a1a1a;
+  --bg: #fff;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  width: 340px;
+  min-height: 360px;
+  background: #f6f6f8;
+  font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.card {
+  margin: 10px;
+  background: var(--bg);
+  border: 3px solid var(--ink);
+  box-shadow: 5px 5px 0 var(--ink);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  background: var(--pink);
+  color: #fff;
+  border-bottom: 3px solid var(--ink);
+}
+.logo { font-weight: 800; font-size: 15px; letter-spacing: .5px; }
+.tag {
+  margin-left: 6px;
+  font-size: 10px;
+  background: #fff;
+  color: var(--pink-d);
+  border: 2px solid var(--ink);
+  border-radius: 4px;
+  padding: 0 4px;
+  vertical-align: middle;
+}
+.ver { font-size: 11px; opacity: .9; }
+
+.notice {
+  margin: 12px;
+  padding: 10px 12px;
+  background: #fff4f7;
+  border: 2px dashed var(--pink);
+  border-radius: 8px;
+}
+.notice strong { color: var(--pink-d); display: block; margin-bottom: 4px; }
+.notice p { margin: 0; }
+.notice em { font-style: normal; font-weight: 700; color: var(--ink); }
+
+.block { padding: 0 14px 10px; }
+.block h3 {
+  font-size: 13px;
+  margin: 10px 0 6px;
+  padding-bottom: 4px;
+  border-bottom: 2px solid var(--ink);
+}
+.block ol, .block ul { margin: 0; padding-left: 18px; }
+.block li { margin: 4px 0; }
+code {
+  background: #eee;
+  border: 1px solid #ccc;
+  border-radius: 3px;
+  padding: 0 4px;
+  font-family: monospace;
+  font-size: 12px;
+}
+b { color: var(--pink-d); }
+
+.foot {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 12px 14px;
+  border-top: 2px solid var(--ink);
+  background: #fafafa;
+}
+button.primary {
+  flex: 1;
+  background: var(--pink);
+  color: #fff;
+  border: 2px solid var(--ink);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 2px 2px 0 var(--ink);
+}
+button.primary:active { transform: translate(1px,1px); box-shadow: 1px 1px 0 var(--ink); }
+.link {
+  color: var(--pink-d);
+  font-size: 12px;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.link:hover { text-decoration: underline; }

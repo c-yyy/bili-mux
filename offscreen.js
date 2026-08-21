@@ -1,0 +1,112 @@
+// offscreen.js — 在 MV3 Offscreen Document 中运行 ffmpeg.wasm（单线程 core）
+//
+// 为什么放这里：ffmpeg.wasm 需要 Worker + WASM，Service Worker 不适合跑，
+// 而扩展页面（Offscreen Document）可以，且单线程 core 不依赖 SharedArrayBuffer，
+// 不需要 B站页面提供 COOP/COEP 响应头。
+//
+// 消息协议（均由 background 中转）：
+//   入站 bili-mux        { type, replyTo, video:ArrayBuffer, audio:ArrayBuffer }
+//   出站 bili-mux-result { type, replyTo, ok, mp4?:ArrayBuffer, error? }
+//   出站 bili-mux-progress { type, replyTo, ratio:0..1 }
+
+let _ff = null;
+let _loading = null;
+let _replyTo = null;
+let _logBuf = [];   // 缓存 ffmpeg 最近日志，用于失败时回显诊断
+
+function getFFmpeg() {
+  if (_ff) return Promise.resolve(_ff);
+  if (_loading) return _loading;
+  _loading = (async () => {
+    // 显式给出三个资源路径，避免依赖 corePath.replace() 推导到不存在的文件
+    // （@ffmpeg/ffmpeg 默认会推导 workerPath = corePath.replace('ffmpeg-core.js','ffmpeg-core.worker.js')，
+    //  本仓库该文件此前缺失，导致 Worker 内容为空 / 拉取 404）
+    const base = chrome.runtime.getURL('lib/ffmpeg/');
+    const corePath = base + 'ffmpeg-core.js';
+    const wasmPath = base + 'ffmpeg-core.wasm';
+    const workerPath = base + 'ffmpeg-core.worker.js';
+    console.log('[ffmpeg] 加载 corePath   =', corePath);
+    console.log('[ffmpeg] 加载 wasmPath   =', wasmPath);
+    console.log('[ffmpeg] 加载 workerPath =', workerPath);
+    const { createFFmpeg } = self.FFmpeg;
+    const inst = createFFmpeg({
+      corePath,
+      wasmPath,
+      workerPath,
+      // 单线程核心（@ffmpeg/core-st）只导出 _main；@ffmpeg/ffmpeg 0.11 包装层默认
+      // 调 proxy_main（多线程 @ffmpeg/core 的入口），二者不匹配会报
+      // "Cannot call unknown function proxy_main"。显式指定 mainName 让 cwrap 调到 _main。
+      mainName: 'main',
+      log: false,
+      // 捕获 ffmpeg 内部日志，失败时一并回传给 content 便于定位
+      logger: ({ message }) => {
+        _logBuf.push(message);
+        if (_logBuf.length > 80) _logBuf.shift();
+      },
+      progress: (ratio) => {
+        if (_replyTo != null) {
+          chrome.runtime.sendMessage({ type: 'bili-mux-progress', replyTo: _replyTo, ratio }).catch(() => {});
+        }
+      }
+    });
+    console.log('[ffmpeg] createFFmpeg 已构造，开始 load()…');
+    await inst.load();
+    _ff = inst;
+    console.log('[ffmpeg] core 加载完成');
+    return inst;
+  })();
+  return _loading;
+}
+
+// 根据文件头猜测输入容器：B站 DASH 视频可能是 fMP4（avc/hevc）或 WebM（vp9/av1），
+// 音频均为 fMP4 封装的 aac（写 .m4a）。用正确的扩展名让 ffmpeg 正确识别格式。
+function probeVideoExt(buf) {
+  const b = new Uint8Array(buf);
+  // WebM / Matroska 以 EBML 头 0x1A45DFA3 开头
+  if (b[0] === 0x1A && b[1] === 0x45 && b[2] === 0xDF && b[3] === 0xA3) return 'webm';
+  return 'mp4';
+}
+
+function send(msg) {
+  console.log('[ffmpeg] 发送', msg.type, 'ok =', msg.ok, 'mp4 =', msg.mp4 && msg.mp4.byteLength, 'err =', msg.error && String(msg.error).slice(0, 80));
+  chrome.runtime.sendMessage(msg).catch((e) => console.error('[ffmpeg] sendMessage 失败', e && e.message));
+}
+
+async function mux(videoBuf, audioBuf) {
+  const ff = await getFFmpeg();
+  _logBuf = [];
+  const vExt = probeVideoExt(videoBuf);
+  console.log('[ffmpeg] 探测视频容器 =', vExt, 'video', videoBuf.byteLength, 'audio', audioBuf.byteLength, '字节');
+  await ff.FS('writeFile', 'inv.' + vExt, new Uint8Array(videoBuf));
+  await ff.FS('writeFile', 'ina.m4a', new Uint8Array(audioBuf));
+  console.log('[ffmpeg] 已写入 MEMFS，开始 run -c copy…');
+  // -c copy 不重新编码，仅容器封装；+faststart 让 moov 前置便于边下边播
+  await ff.run('-i', 'inv.' + vExt, '-i', 'ina.m4a', '-c', 'copy', '-movflags', '+faststart', '-y', 'out.mp4');
+  const data = ff.FS('readFile', 'out.mp4'); // Uint8Array
+  console.log('[ffmpeg] 合成完成，out.mp4 =', data.length, '字节');
+  // 释放 MEMFS，避免多次合成后内存堆积
+  try { ff.FS('unlink', 'inv.' + vExt); ff.FS('unlink', 'ina.m4a'); ff.FS('unlink', 'out.mp4'); } catch (e) {}
+  // 拷贝成精确长度的 ArrayBuffer 再传（readFile 返回的视图可能基于更大的池）
+  return new Uint8Array(data).buffer;
+}
+
+chrome.runtime.onMessage.addListener((msg) => {
+  if (msg && msg.type === 'bili-mux') {
+    console.log('[ffmpeg] 收到 bili-mux, replyTo =', msg.replyTo);
+    _replyTo = msg.replyTo;
+    mux(msg.video, msg.audio)
+      .then((mp4) => send({ type: 'bili-mux-result', replyTo: msg.replyTo, ok: true, mp4 }))
+      .catch((e) => {
+        const errMsg = String((e && e.message) || e);
+        const tail = _logBuf.slice(-15).join('\n');
+        console.error('[ffmpeg] 合成失败:', errMsg, '\n--- ffmpeg 日志尾 ---\n' + tail);
+        send({ type: 'bili-mux-result', replyTo: msg.replyTo, ok: false, error: errMsg + (tail ? ('\n' + tail) : '') });
+      })
+      .finally(() => { _replyTo = null; });
+  }
+});
+
+// 就绪信号：本文件的 onMessage 已注册后，主动通知 background 可以安全派发任务，
+// 消除「文档刚创建、监听器还没接上就发消息」的竞态（否则首条 bili-mux 会丢失 → 150s 超时）。
+chrome.runtime.sendMessage({ type: 'bili-offscreen-ready' }).catch(() => {});
+console.log('[ffmpeg] offscreen 就绪信号已发出');

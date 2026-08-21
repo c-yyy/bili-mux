@@ -1,0 +1,10 @@
+# Chrome 加载 unpacked 扩展时生成的机器相关目录（每次加载会重建）
+_metadata/
+
+# WorkBuddy 内部项目记忆与状态（非扩展源码，自动生成）
+.workbuddy/
+
+# 依赖 / 临时
+node_modules/
+.tmp-*/
+*.bak

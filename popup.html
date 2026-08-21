@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>B站视频下载助手</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <div class="card">
+    <header class="head">
+      <div class="logo">B站下载助手<span class="tag">自用</span></div>
+      <div class="ver" id="ver">v1.0.0</div>
+    </header>
+
+    <section class="notice">
+      <strong>使用边界（务必阅读）</strong>
+      <p>本工具<em>仅解析你账号本就有权播放的流</em>，用于<em>个人留存、学习</em>。
+      请勿用于<em>批量搬运</em>或<em>二次分发</em>，由此产生的版权/账号风险由使用者自行承担。</p>
+    </section>
+
+    <section class="block">
+      <h3>怎么用</h3>
+      <ol>
+        <li>打开任意一个 <code>bilibili.com/video/</code> 视频页（需已登录）。</li>
+        <li>右下角会出现粉色悬浮按钮，点开即是下载面板。</li>
+        <li>选清晰度 →
+          <b>合成 MP4</b>：浏览器内直接 mux 成单个文件下载（无需本机 ffmpeg）；
+          <b>分离下载</b>：分别下视频/音频流，本地用 ffmpeg 合并。</li>
+        <li><b>FLV 合并下载</b>：对支持 FLV 的视频，二进制拼接即得可播放文件。</li>
+        <li><b>分P列表</b>：勾选多 P 后批量合并下载。</li>
+      </ol>
+    </section>
+
+    <section class="block">
+      <h3>说明</h3>
+      <ul>
+        <li>直链带过期时间，解析后请尽快下载。</li>
+        <li>清晰度上限由你的登录态决定。</li>
+        <li>封面为静态直链，直接下载。</li>
+        <li>浏览器内合成需 Chrome 116+（用 Offscreen Document 跑 ffmpeg.wasm，单线程 core 无需特殊响应头）。</li>
+      </ul>
+    </section>
+
+    <footer class="foot">
+      <button id="open" class="primary">打开 B站视频页</button>
+      <a id="cur" class="link" href="#" target="_blank" rel="noopener" hidden>跳到当前页面板 →</a>
+    </footer>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>

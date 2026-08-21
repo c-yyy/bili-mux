@@ -1,0 +1,60 @@
+{
+  "manifest_version": 3,
+  "name": "B站视频下载助手(自用)",
+  "version": "1.0.0",
+  "description": "解析B站视频直链与封面，支持分P批量、FLV合并下载、视频流与音频流分别保存。仅供个人学习留存，勿二次分发。",
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "permissions": ["downloads", "scripting", "declarativeNetRequestWithHostAccess", "offscreen"],
+  "action": {
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    },
+    "default_popup": "popup.html",
+    "default_title": "B站视频下载助手（自用）"
+  },
+  "host_permissions": [
+    "*://*.bilibili.com/*",
+    "*://*.bilivideo.com/*",
+    "*://*.bilivideo.cn/*",
+    "*://*.hdslb.com/*",
+    "*://*.i0.hdslb.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "*://www.bilibili.com/video/*",
+        "*://bilibili.com/video/*",
+        "*://m.bilibili.com/video/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["lib/ffmpeg/*"],
+      "matches": ["<all_urls>"]
+    }
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+  },
+  "declarative_net_request": {
+    "rule_resources": [
+      {
+        "id": "referer-rule",
+        "enabled": true,
+        "path": "rules.json"
+      }
+    ]
+  }
+}
