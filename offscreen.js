@@ -93,6 +93,20 @@ function send(msg) {
 
 async function mux(videoBuf, audioBuf) {  // 入参为 Uint8Array（已由监听器解码）
   const ff = await getFFmpeg();
+  try {
+    return await muxOnce(ff, videoBuf, audioBuf);
+  } finally {
+    // 每次合成后销毁实例，下次合成重新 load：
+    // 0.11 包装层靠 core 打印 FFMPEG_END 来复位 running 标志，core-st 这个复位不可靠，
+    // 残留 running=true 会导致第二次 run 直接抛 "can only run one command at a time"。
+    // 重建实例（wasm 有缓存，reload 很快）是最稳妥的规避方式，也顺带清空 MEMFS。
+    try { ff.exit(); } catch (e) {}
+    _ff = null;
+    _loading = null;
+  }
+}
+
+async function muxOnce(ff, videoBuf, audioBuf) {
   _logBuf = [];
   const vExt = probeVideoExt(videoBuf);
   const vName = 'inv.' + vExt;
