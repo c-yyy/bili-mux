@@ -37,7 +37,7 @@ function getFFmpeg() {
       // 调 proxy_main（多线程 @ffmpeg/core 的入口），二者不匹配会报
       // "Cannot call unknown function proxy_main"。显式指定 mainName 让 cwrap 调到 _main。
       mainName: 'main',
-      log: false,
+      log: true,
       // 捕获 ffmpeg 内部日志，失败时一并回传给 content 便于定位
       logger: ({ message }) => {
         _logBuf.push(message);
@@ -76,16 +76,31 @@ async function mux(videoBuf, audioBuf) {
   const ff = await getFFmpeg();
   _logBuf = [];
   const vExt = probeVideoExt(videoBuf);
+  const vName = 'inv.' + vExt;
+  const aName = 'ina.mp4';   // 参考实现把音频也按 mp4 容器命名，确保 ffmpeg 正确识别 aac
   console.log('[ffmpeg] 探测视频容器 =', vExt, 'video', videoBuf.byteLength, 'audio', audioBuf.byteLength, '字节');
-  await ff.FS('writeFile', 'inv.' + vExt, new Uint8Array(videoBuf));
-  await ff.FS('writeFile', 'ina.m4a', new Uint8Array(audioBuf));
-  console.log('[ffmpeg] 已写入 MEMFS，开始 run -c copy…');
-  // -c copy 不重新编码，仅容器封装；+faststart 让 moov 前置便于边下边播
-  await ff.run('-i', 'inv.' + vExt, '-i', 'ina.m4a', '-c', 'copy', '-movflags', '+faststart', '-y', 'out.mp4');
+  await ff.FS('writeFile', vName, new Uint8Array(videoBuf));
+  await ff.FS('writeFile', aName, new Uint8Array(audioBuf));
+  console.log('[ffmpeg] 已写入 MEMFS，开始合成（-vcodec copy -acodec copy，不加 +faststart 以兼容 B站 fMP4 输入）…');
+  try {
+    // 对齐参考实现 bilibili-helper：先视频后音频，-vcodec/-acodec copy（等价 -c copy），
+    // 不加 -movflags +faststart（+faststart 在「从 fMP4 复制」时可能失败导致无输出并静默返回）。
+    await ff.run('-i', vName, '-i', aName, '-vcodec', 'copy', '-acodec', 'copy', '-y', 'out.mp4');
+  } catch (e) {
+    const tail = _logBuf.slice(-20).join('\n');
+    throw new Error('ffmpeg 执行异常: ' + (e && e.message || e) + (tail ? ('\n' + tail) : ''));
+  }
+  // 0.11 的 run 在 ffmpeg 失败时常不抛错而直接返回，需手动确认输出存在，否则抛出真实日志
+  let size = 0;
+  try { size = ff.FS('stat', 'out.mp4').size; } catch (e) { size = 0; }
+  if (!size) {
+    const tail = _logBuf.slice(-25).join('\n');
+    throw new Error('ffmpeg 未生成 out.mp4（合成失败）。ffmpeg 日志：\n' + (tail || '(无日志，请确认核心已正常加载)'));
+  }
   const data = ff.FS('readFile', 'out.mp4'); // Uint8Array
   console.log('[ffmpeg] 合成完成，out.mp4 =', data.length, '字节');
   // 释放 MEMFS，避免多次合成后内存堆积
-  try { ff.FS('unlink', 'inv.' + vExt); ff.FS('unlink', 'ina.m4a'); ff.FS('unlink', 'out.mp4'); } catch (e) {}
+  try { ff.FS('unlink', vName); ff.FS('unlink', aName); ff.FS('unlink', 'out.mp4'); } catch (e) {}
   // 拷贝成精确长度的 ArrayBuffer 再传（readFile 返回的视图可能基于更大的池）
   return new Uint8Array(data).buffer;
 }

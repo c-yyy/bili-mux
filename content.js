@@ -640,17 +640,6 @@ function observeToolbar(togglePanel) {
   // 浏览器内合成 MP4：按顺序拉取视频流 → 音频流（不并行），再交给 offscreen 里的
   // ffmpeg.wasm 封装成单个 MP4；失败回退到分离下载。
   let _muxResolver = null;
-  // 回退：仅提交分离下载，不再覆盖状态（错误原因由调用方负责显示）
-  function fallbackSeparate() {
-    if (!dashData) return;
-    const v = pickVideoUrls()[0];
-    const a = pickAudioUrls()[0];
-    console.log('[bili-dl] 回退：提交分离下载 video + audio（fetch+Blob 落地）');
-    downloadStream(v, `${sanitize(viewData.title)}_${elQn.value}_video.m4s`)
-      .catch((e) => console.error('[bili-dl] 回退视频流下载失败', e && e.message));
-    downloadStream(a, `${sanitize(viewData.title)}_audio.m4s`)
-      .catch((e) => console.error('[bili-dl] 回退音频流下载失败', e && e.message));
-  }
   guarded($('btn-mux'), async () => {
     if (!dashData) return setStatus('请先等待解析');
     $('muxbox').style.display = 'block';
@@ -759,12 +748,11 @@ function observeToolbar(togglePanel) {
         setBar('m', 1);
         setStatus('MP4 已合成并下载');
       } else {
-        // 关键：错误原因单独保留，不再被"已回退"覆盖；同时回退分离下载
+        // 合成失败不再自动把音视频流下载到本地（用户要求）：内存中已拉取的流直接丢弃，
+        // 仅在状态栏与控制台给出明确原因；如需原始流可手动点“下载视频流/音频流”。
         const reason = (msg.error || '未知原因').trim();
         console.error('[bili-dl] mux: 浏览器合成失败，原因 =\n' + reason);
-        console.log('[bili-dl] mux: 回退为分离下载');
-        setStatus('浏览器合成失败（已回退分离下载）。原因: ' + reason + '（详见控制台 [bili-dl] 日志）');
-        fallbackSeparate();
+        setStatus('浏览器内合成失败。原因: ' + reason + '（详见控制台 [bili-dl] 日志）');
       }
       return;
     }
