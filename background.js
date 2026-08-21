@@ -68,15 +68,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     });
 
     console.log('[bili-bg] 收到 bili-mux, requestId =', requestId, 'tabId =', tabId,
-      'video', msg.video && msg.video.byteLength, 'audio', msg.audio && msg.audio.byteLength);
+      'videoB64', msg.videoB64 && msg.videoB64.length, 'audioB64', msg.audioB64 && msg.audioB64.length);
 
     ensureOffscreen().then(() => {
       console.log('[bili-bg] offscreen 就绪，转发 bili-mux 给 offscreen, requestId =', requestId);
       return chrome.runtime.sendMessage({
         type: 'bili-mux',
         replyTo: requestId,
-        video: msg.video,
-        audio: msg.audio
+        videoB64: msg.videoB64,
+        audioB64: msg.audioB64
       });
     }).catch((e) => {
       console.error('[bili-bg] ensureOffscreen / 转发 失败', e && e.message);
@@ -110,10 +110,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       const resolve = _muxPending.get(msg.replyTo);
       if (resolve) {
         _muxPending.delete(msg.replyTo);
-        resolve({ ok: !!msg.ok, mp4: msg.mp4, error: msg.error });
+        resolve({ ok: !!msg.ok, mp4B64: msg.mp4B64, error: msg.error });
       } else if (tabId != null) {
         // 兜底：pending 已因超时清理，仍尝试直接转发，避免 content 卡在等待
-        chrome.tabs.sendMessage(tabId, { type: 'bili-mux-result', routed: true, ok: !!msg.ok, mp4: msg.mp4, error: msg.error }).catch(() => {});
+        chrome.tabs.sendMessage(tabId, { type: 'bili-mux-result', routed: true, ok: !!msg.ok, mp4B64: msg.mp4B64, error: msg.error }).catch(() => {});
       }
     } else if (tabId != null) {
       // 进度直接转发

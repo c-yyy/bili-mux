@@ -639,6 +639,25 @@ function observeToolbar(togglePanel) {
 
   // 浏览器内合成 MP4：按顺序拉取视频流 → 音频流（不并行），再交给 offscreen 里的
   // ffmpeg.wasm 封装成单个 MP4；失败回退到分离下载。
+  //
+  // 注意：chrome.runtime.sendMessage 只支持 JSON 序列化，ArrayBuffer 会被序列化成 {}
+  // （对端 new Uint8Array({}) 得到 0 字节，ffmpeg 报 "moov atom not found"）。
+  // 因此所有跨进程二进制载荷一律 base64 编码传输。
+  function bufToB64(buf) {
+    const bytes = new Uint8Array(buf);
+    let bin = '';
+    const CHUNK = 0x8000; // 分块避免 String.fromCharCode 参数过多爆栈
+    for (let i = 0; i < bytes.length; i += CHUNK) {
+      bin += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
+    }
+    return btoa(bin);
+  }
+  function b64ToU8(b64) {
+    const bin = atob(b64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return bytes;
+  }
   let _muxResolver = null;
   guarded($('btn-mux'), async () => {
     if (!dashData) return setStatus('请先等待解析');
@@ -664,8 +683,10 @@ function observeToolbar(togglePanel) {
     setStatus('浏览器内合成中 0%');
     setBar('m', 0); // 交给 offscreen 的合成进度（0→1）接管
     console.log('[bili-dl] mux: 发送 bili-mux 到 background, video', vBuf.byteLength, 'audio', aBuf.byteLength);
-    // 带 lastError 检查，避免大体积 ArrayBuffer 发送失败时静默丢消息
-    chrome.runtime.sendMessage({ type: 'bili-mux', video: vBuf, audio: aBuf }, () => {
+    // base64 编码后发送（消息通道不支持 ArrayBuffer）；带 lastError 检查避免静默丢消息
+    const payload = { type: 'bili-mux', videoB64: bufToB64(vBuf), audioB64: bufToB64(aBuf) };
+    vBuf = aBuf = null; // 尽早释放原始 buffer，base64 期间内存占用翻倍
+    chrome.runtime.sendMessage(payload, () => {
       if (chrome.runtime.lastError) console.error('[bili-dl] mux: 发送 bili-mux 失败', chrome.runtime.lastError.message);
     });
     // 等待 background 定向转发的合成结果（下方 runtime 监听 resolve），期间按钮保持置灰；
@@ -741,9 +762,10 @@ function observeToolbar(togglePanel) {
     }
     if (msg.type === 'bili-mux-result') {
       if (_muxResolver) { const r = _muxResolver; _muxResolver = null; r(); } // 释放 guarded 锁
-      if (msg.ok && msg.mp4) {
-        console.log('[bili-dl] mux: 收到合成结果 ok, mp4 字节 =', msg.mp4.byteLength);
-        const blob = new Blob([msg.mp4], { type: 'video/mp4' });
+      if (msg.ok && msg.mp4B64) {
+        const mp4 = b64ToU8(msg.mp4B64);
+        console.log('[bili-dl] mux: 收到合成结果 ok, mp4 字节 =', mp4.length);
+        const blob = new Blob([mp4], { type: 'video/mp4' });
         downloadBlob(blob, `${sanitize(viewData.title)}_${elQn.value}.mp4`);
         setBar('m', 1);
         setStatus('MP4 已合成并下载');

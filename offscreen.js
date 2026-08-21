@@ -4,15 +4,32 @@
 // 而扩展页面（Offscreen Document）可以，且单线程 core 不依赖 SharedArrayBuffer，
 // 不需要 B站页面提供 COOP/COEP 响应头。
 //
-// 消息协议（均由 background 中转）：
-//   入站 bili-mux        { type, replyTo, video:ArrayBuffer, audio:ArrayBuffer }
-//   出站 bili-mux-result { type, replyTo, ok, mp4?:ArrayBuffer, error? }
+// 消息协议（均由 background 中转；二进制载荷一律 base64，消息通道不支持 ArrayBuffer）：
+//   入站 bili-mux        { type, replyTo, videoB64:string, audioB64:string }
+//   出站 bili-mux-result { type, replyTo, ok, mp4B64?:string, error? }
 //   出站 bili-mux-progress { type, replyTo, ratio:0..1 }
 
 let _ff = null;
 let _loading = null;
 let _replyTo = null;
 let _logBuf = [];   // 缓存 ffmpeg 最近日志，用于失败时回显诊断
+
+// chrome.runtime.sendMessage 只支持 JSON 序列化，ArrayBuffer 会被序列化成 {}，
+// 因此跨进程二进制载荷一律 base64；这里负责解码入站、编码出站。
+function b64ToU8(b64) {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
+}
+function u8ToB64(bytes) {
+  let bin = '';
+  const CHUNK = 0x8000;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    bin += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(bin);
+}
 
 function getFFmpeg() {
   if (_ff) return Promise.resolve(_ff);
@@ -70,19 +87,19 @@ function probeVideoExt(buf) {
 }
 
 function send(msg) {
-  console.log('[ffmpeg] 发送', msg.type, 'ok =', msg.ok, 'mp4 =', msg.mp4 && msg.mp4.byteLength, 'err =', msg.error && String(msg.error).slice(0, 80));
+  console.log('[ffmpeg] 发送', msg.type, 'ok =', msg.ok, 'mp4B64 =', msg.mp4B64 && msg.mp4B64.length, 'err =', msg.error && String(msg.error).slice(0, 80));
   chrome.runtime.sendMessage(msg).catch((e) => console.error('[ffmpeg] sendMessage 失败', e && e.message));
 }
 
-async function mux(videoBuf, audioBuf) {
+async function mux(videoBuf, audioBuf) {  // 入参为 Uint8Array（已由监听器解码）
   const ff = await getFFmpeg();
   _logBuf = [];
   const vExt = probeVideoExt(videoBuf);
   const vName = 'inv.' + vExt;
   const aName = 'ina.mp4';   // 参考实现把音频也按 mp4 容器命名，确保 ffmpeg 正确识别 aac
-  console.log('[ffmpeg] 探测视频容器 =', vExt, 'video', videoBuf.byteLength, 'audio', audioBuf.byteLength, '字节');
-  await ff.FS('writeFile', vName, new Uint8Array(videoBuf));
-  await ff.FS('writeFile', aName, new Uint8Array(audioBuf));
+  console.log('[ffmpeg] 探测视频容器 =', vExt, 'video', videoBuf.length, 'audio', audioBuf.length, '字节');
+  await ff.FS('writeFile', vName, videoBuf);
+  await ff.FS('writeFile', aName, audioBuf);
   console.log('[ffmpeg] 已写入 MEMFS，开始合成（-vcodec copy -acodec copy，不加 +faststart 以兼容 B站 fMP4 输入）…');
   try {
     // 对齐参考实现 bilibili-helper：先视频后音频，-vcodec/-acodec copy（等价 -c copy），
@@ -101,20 +118,21 @@ async function mux(videoBuf, audioBuf) {
     try { dir = 'MEMFS 根目录: ' + ff.FS('readdir', '/').join(', '); } catch (e) {}
     throw new Error('ffmpeg 未生成 out.mp4（合成失败）。' + dir + '\nffmpeg 日志：\n' + (tail || '(无日志，请确认核心已正常加载)'));
   }
-  const data = ff.FS('readFile', 'out.mp4'); // Uint8Array
+  const data = ff.FS('readFile', 'out.mp4'); // Uint8Array（可能是大池上的视图）
   console.log('[ffmpeg] 合成完成，out.mp4 =', data.length, '字节');
   // 释放 MEMFS，避免多次合成后内存堆积
   try { ff.FS('unlink', vName); ff.FS('unlink', aName); ff.FS('unlink', 'out.mp4'); } catch (e) {}
-  // 拷贝成精确长度的 ArrayBuffer 再传（readFile 返回的视图可能基于更大的池）
-  return new Uint8Array(data).buffer;
+  // 拷贝成精确长度的 Uint8Array 再返回（readFile 返回的视图可能基于更大的池）
+  return new Uint8Array(data);
 }
 
 chrome.runtime.onMessage.addListener((msg) => {
   if (msg && msg.type === 'bili-mux') {
-    console.log('[ffmpeg] 收到 bili-mux, replyTo =', msg.replyTo);
+    console.log('[ffmpeg] 收到 bili-mux, replyTo =', msg.replyTo,
+      'videoB64', msg.videoB64 && msg.videoB64.length, 'audioB64', msg.audioB64 && msg.audioB64.length);
     _replyTo = msg.replyTo;
-    mux(msg.video, msg.audio)
-      .then((mp4) => send({ type: 'bili-mux-result', replyTo: msg.replyTo, ok: true, mp4 }))
+    mux(b64ToU8(msg.videoB64 || ''), b64ToU8(msg.audioB64 || ''))
+      .then((mp4) => send({ type: 'bili-mux-result', replyTo: msg.replyTo, ok: true, mp4B64: u8ToB64(mp4) }))
       .catch((e) => {
         const errMsg = String((e && e.message) || e);
         const tail = _logBuf.slice(-15).join('\n');
