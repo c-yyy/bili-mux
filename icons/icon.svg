@@ -1,8 +1,15 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="128" height="128">
-  <rect x="1.5" y="1.5" width="21" height="21" rx="5" fill="#fb7299"/>
-  <g fill="#ffffff">
-    <rect x="10.8" y="4.6" width="2.4" height="8.2"/>
-    <path d="M6.4 11.4 L12 17 L17.6 11.4 L16.3 10.1 L12 14.4 L7.7 10.1 Z"/>
-    <rect x="5" y="18.3" width="14" height="1.8" rx="0.9"/>
-  </g>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <rect x="4" y="4" width="120" height="120" rx="28" fill="#fb7299"/>
+  <!-- 猫耳 -->
+  <path d="M28 36 L40 8 L60 36 Z" fill="#fff"/>
+  <path d="M100 36 L88 8 L68 36 Z" fill="#fff"/>
+  <!-- 猫脸 -->
+  <ellipse cx="64" cy="72" rx="36" ry="30" fill="#fff"/>
+  <!-- 眼睛 -->
+  <circle cx="50" cy="66" r="5" fill="#333"/>
+  <circle cx="78" cy="66" r="5" fill="#333"/>
+  <!-- 鼻子 -->
+  <path d="M58 80 L70 80 L64 85 Z" fill="#fb7299"/>
+  <!-- 嘴 -->
+  <path d="M55 90 Q64 96 73 90" stroke="#888" stroke-width="2.5" fill="none" stroke-linecap="round"/>
 </svg>

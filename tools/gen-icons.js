@@ -1,5 +1,7 @@
 // 用 Node 内置 zlib 手写 PNG 编码器，生成扩展图标（无外部依赖）。
-// 图标设计：粉色(#fb7299)圆角方块 + 白色下载箭头（视频下载助手品牌标识）。
+// 旧版图标设计：粉色(#fb7299)圆角方块 + 白色下载箭头（下载工具品牌标识）。
+// 新版图标（哔哩喵 / Bili-Mux）：粉色圆角方块 + 白色猫脸 + 下载元素，
+//   PNG 由 AI 生成后 sips 缩放，SVG 手绘在 icon.svg 中。本脚本保留用于快速重绘旧版。
 const zlib = require('zlib');
 const fs = require('fs');
 const path = require('path');
