@@ -222,9 +222,18 @@ async function fetchAndConcat(urls, onRatio) {
 // 用 credentials:'omit' —— B站媒体 CDN 直链自带签名鉴权、无需 Cookie，
 // 且多数 CDN 节点不允许 credentials 跨域（会导致 CORS 失败 / 卡死）。
 // 与 FLV 合并（fetchAndConcat）使用同一套参数，是验证可用的路径。
-async function fetchStream(url, onRatio, timeoutMs = 120000) {
+//
+// 超时策略：不用「总时长」硬超时——大文件下载耗时久会被误杀，表现为
+// "BodyStreamBuffer was aborted"。改用「停滞」超时：只要持续收到字节就不中断，
+// 仅当 stallMs 内没有任何数据到达才判定卡死并中止。
+async function fetchStream(url, onProgress, stallMs = 60000) {
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  let timer = null;
+  const arm = () => { // 每收到一个分块重置计时
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => ctrl.abort(), stallMs);
+  };
+  arm();
   try {
     const r = await fetch(url, {
       credentials: 'omit',
@@ -239,20 +248,26 @@ async function fetchStream(url, onRatio, timeoutMs = 120000) {
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
+      arm(); // 收到数据，重置停滞计时
       segs.push(value);
       received += value.length;
       netBytesTotal += value.length;
-      if (onRatio && cl > 0) onRatio(received / cl);
+      // onProgress(received, total)：total 为 Content-Length，缺失时为 0
+      if (onProgress) onProgress(received, cl);
     }
     let total = 0;
     for (const s of segs) total += s.length;
     const out = new Uint8Array(total);
     let off = 0;
     for (const s of segs) { out.set(s, off); off += s.length; }
-    if (onRatio) onRatio(1);
+    if (onProgress) onProgress(total, total);
     return out.buffer; // 精确长度的 ArrayBuffer
+  } catch (e) {
+    // 区分「停滞超时中止」与真实网络错误，给出可读提示
+    if (ctrl.signal.aborted) throw new Error('下载停滞超时（' + Math.round(stallMs / 1000) + 's 无数据到达），可重试或改用 FLV 合并');
+    throw e;
   } finally {
-    clearTimeout(timer);
+    if (timer) clearTimeout(timer);
   }
 }
 
@@ -673,22 +688,30 @@ function observeToolbar(togglePanel) {
     for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
     return bytes;
   }
+  // 字节数转 MB（保留两位小数），用于日志展示流体积
+  function mb(bytes) { return (bytes / 1048576).toFixed(2) + ' MB'; }
   let _muxResolver = null;
   guarded($('btn-mux'), async () => {
     if (!dashData) return setStatus('请先等待解析');
     $('muxbox').style.display = 'block';
     setBar('m', 0);
     let vBuf = null, aBuf = null;
+    // 拉流进度回调：把「已接收/总体积 + 百分比」写到进度条下方的状态栏，
+    // 例如「拉取视频流 (29.25 MB) 23%」。total 为 0（无 Content-Length）时只显示已接收量。
+    const fetchStatus = (label, barOffset, barSpan) => (received, total) => {
+      const pct = total > 0 ? ' ' + Math.round(received / total * 100) + '%' : '';
+      const size = total > 0 ? mb(total) : mb(received);
+      setStatus(label + ' (' + size + ')' + pct);
+      setBar('m', barOffset + (total > 0 ? received / total : 0) * barSpan);
+    };
     try {
       // 顺序拉取：先视频（进度 0→50%），再音频（50%→100%），不并行
-      setStatus('拉取视频流…');
       console.log('[bili-mux] mux: 开始拉取视频流', String(pickVideoUrls()[0]).slice(0, 60) + '…');
-      vBuf = await fetchStream(pickVideoUrls()[0], (r) => setBar('m', r * 0.5));
-      console.log('[bili-mux] mux: 视频流拉取完成', vBuf.byteLength, '字节');
-      setStatus('视频流已拉取，拉取音频流…');
+      vBuf = await fetchStream(pickVideoUrls()[0], fetchStatus('拉取视频流', 0, 0.5));
+      console.log('[bili-mux] mux: 视频流拉取完成', mb(vBuf.byteLength));
       console.log('[bili-mux] mux: 开始拉取音频流', String(pickAudioUrls()[0]).slice(0, 60) + '…');
-      aBuf = await fetchStream(pickAudioUrls()[0], (r) => setBar('m', 0.5 + r * 0.5));
-      console.log('[bili-mux] mux: 音频流拉取完成', aBuf.byteLength, '字节');
+      aBuf = await fetchStream(pickAudioUrls()[0], fetchStatus('拉取音频流', 0.5, 0.5));
+      console.log('[bili-mux] mux: 音频流拉取完成', mb(aBuf.byteLength));
     } catch (e) {
       // 拉流失败：给出明确提示，不进入等待、不乱回退，避免按钮卡死
       setStatus('拉取流失败: ' + (e && e.message) + '（可改用 FLV 合并或分离下载）');
@@ -697,7 +720,7 @@ function observeToolbar(togglePanel) {
     }
     setStatus('浏览器内合成中 0%');
     setBar('m', 0); // 交给 offscreen 的合成进度（0→1）接管
-    console.log('[bili-mux] mux: 发送 bili-mux 到 background, video', vBuf.byteLength, 'audio', aBuf.byteLength);
+    console.log('[bili-mux] mux: 发送 bili-mux 到 background, video', mb(vBuf.byteLength), 'audio', mb(aBuf.byteLength));
     // base64 编码后发送（消息通道不支持 ArrayBuffer）；带 lastError 检查避免静默丢消息
     const payload = { type: 'bili-mux', videoB64: bufToB64(vBuf), audioB64: bufToB64(aBuf) };
     vBuf = aBuf = null; // 尽早释放原始 buffer，base64 期间内存占用翻倍

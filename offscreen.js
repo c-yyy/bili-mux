@@ -30,6 +30,8 @@ function u8ToB64(bytes) {
   }
   return btoa(bin);
 }
+// 字节数转 MB（保留两位小数），用于日志展示流体积
+function mb(bytes) { return (bytes / 1048576).toFixed(2) + ' MB'; }
 
 function getFFmpeg() {
   if (_ff) return Promise.resolve(_ff);
@@ -128,7 +130,7 @@ async function muxOnce(ff, videoBuf, audioBuf) {
   const vExt = probeVideoExt(videoBuf);
   const vName = 'inv.' + vExt;
   const aName = 'ina.mp4';   // 参考实现把音频也按 mp4 容器命名，确保 ffmpeg 正确识别 aac
-  console.log('[ffmpeg] 探测视频容器 =', vExt, 'video', videoBuf.length, 'audio', audioBuf.length, '字节');
+  console.log('[ffmpeg] 探测视频容器 =', vExt, 'video', mb(videoBuf.length), 'audio', mb(audioBuf.length));
   await ff.FS('writeFile', vName, videoBuf);
   await ff.FS('writeFile', aName, audioBuf);
   console.log('[ffmpeg] 已写入 MEMFS，开始合成（-vcodec copy -acodec copy，不加 +faststart 以兼容 B站 fMP4 输入）…');
@@ -150,7 +152,7 @@ async function muxOnce(ff, videoBuf, audioBuf) {
     throw new Error('ffmpeg 未生成 out.mp4（合成失败）。' + dir + '\nffmpeg 日志：\n' + (tail || '(无日志，请确认核心已正常加载)'));
   }
   const data = ff.FS('readFile', 'out.mp4'); // Uint8Array（可能是大池上的视图）
-  console.log('[ffmpeg] 合成完成，out.mp4 =', data.length, '字节');
+  console.log('[ffmpeg] 合成完成，out.mp4 =', mb(data.length));
   // 释放 MEMFS，避免多次合成后内存堆积
   try { ff.FS('unlink', vName); ff.FS('unlink', aName); ff.FS('unlink', 'out.mp4'); } catch (e) {}
   // 拷贝成精确长度的 Uint8Array 再返回（readFile 返回的视图可能基于更大的池）
@@ -159,8 +161,10 @@ async function muxOnce(ff, videoBuf, audioBuf) {
 
 chrome.runtime.onMessage.addListener((msg) => {
   if (msg && msg.type === 'bili-mux') {
+    // base64 长度 → 实际字节数 ≈ len * 3 / 4
+    const b64Mb = (s) => s ? mb(Math.floor(s.length * 3 / 4)) : '0 MB';
     console.log('[ffmpeg] 收到 bili-mux, replyTo =', msg.replyTo,
-      'videoB64', msg.videoB64 && msg.videoB64.length, 'audioB64', msg.audioB64 && msg.audioB64.length);
+      'video', b64Mb(msg.videoB64), 'audio', b64Mb(msg.audioB64));
     _replyTo = msg.replyTo;
     mux(b64ToU8(msg.videoB64 || ''), b64ToU8(msg.audioB64 || ''))
       .then((mp4) => send({ type: 'bili-mux-result', replyTo: msg.replyTo, ok: true, mp4B64: u8ToB64(mp4) }))

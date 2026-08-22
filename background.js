@@ -67,8 +67,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       }, 150000);
     });
 
+    // base64 长度 → 实际字节数 ≈ len * 3 / 4，转 MB 便于日志阅读
+    const b64Mb = (s) => s ? (Math.floor(s.length * 3 / 4) / 1048576).toFixed(2) + ' MB' : '0 MB';
     console.log('[bili-mux] 收到 bili-mux, requestId =', requestId, 'tabId =', tabId,
-      'videoB64', msg.videoB64 && msg.videoB64.length, 'audioB64', msg.audioB64 && msg.audioB64.length);
+      'video', b64Mb(msg.videoB64), 'audio', b64Mb(msg.audioB64));
 
     ensureOffscreen().then(() => {
       console.log('[bili-mux] offscreen 就绪，转发 bili-mux 给 offscreen, requestId =', requestId);

@@ -8,18 +8,7 @@
 
 > **仅供个人学习留存使用，请勿用于批量搬运或二次分发。**
 
-## 快速安装
-
-**推荐直接下载已打包的 CRX 扩展包**：[Bili-Mux-v1.1.0.crx](./Bili-Mux-v1.1.0.crx)
-
-1. 下载上方的 `.crx` 文件。
-2. 打开 Chrome，进入 `chrome://extensions/`。
-3. 开启右上角「开发者模式」。
-4. 将 `.crx` 文件拖入浏览器窗口即可安装。
-
 ## 功能一览
-
-<p align="center"><img src="screenshots/panel-overview.png" width="560" alt="下载面板预览：黑丝标题、BV 号、副标题、封面、清晰度选择、DASH/合成 MP4 按钮、实时内存与网络速率"></p>
 
 | 功能 | 说明 |
 |------|------|
