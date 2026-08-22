@@ -11,3 +11,6 @@ node_modules/
 
 # macOS
 .DS_Store
+
+# 扩展签名私钥（不入仓库）
+*.pem

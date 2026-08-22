@@ -17,9 +17,9 @@
 3. 开启右上角「开发者模式」。
 4. 将 `.crx` 文件拖入浏览器窗口即可安装。
 
-> 如需自行打包，可使用本仓库的 `Bili-Mux-v1.1.0.pem` 密钥运行 `chrome --pack-extension=项目目录 --pack-extension-key=Bili-Mux-v1.1.0.pem`。
-
 ## 功能一览
+
+<p align="center"><img src="screenshots/panel-overview.png" width="560" alt="下载面板预览：黑丝标题、BV 号、副标题、封面、清晰度选择、DASH/合成 MP4 按钮、实时内存与网络速率"></p>
 
 | 功能 | 说明 |
 |------|------|

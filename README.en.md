@@ -17,9 +17,9 @@ A Manifest V3 Chrome extension that injects a download panel into Bilibili video
 3. Enable "Developer mode" (top right).
 4. Drag the `.crx` file into the browser window to install.
 
-> To pack the extension yourself, use the `Bili-Mux-v1.1.0.pem` key: `chrome --pack-extension=project_dir --pack-extension-key=Bili-Mux-v1.1.0.pem`.
-
 ## Features
+
+<p align="center"><img src="screenshots/panel-overview.png" width="560" alt="Panel preview: title, BV ID, subtitle, cover, quality selector, DASH / MP4 mux buttons, real-time memory & network speed"></p>
 
 | Feature | Description |
 |---------|-------------|
