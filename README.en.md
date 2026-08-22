@@ -1,5 +1,7 @@
 # Bili-Mux (哔哩喵)
 
+<p align="center"><img src="icons/icon-source.jpg" width="128" alt="Bili-Mux Icon"></p>
+
 **English** | [中文](./README.md)
 
 A Manifest V3 Chrome extension that injects a download panel into Bilibili video pages, supporting cover download, DASH audio/video stream saving, in-browser ffmpeg.wasm MP4 muxing, FLV merge download, and multi-part batch download.

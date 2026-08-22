@@ -1,5 +1,7 @@
 # 哔哩喵 (Bili-Mux)
 
+<p align="center"><img src="icons/icon-source.jpg" width="128" alt="哔哩喵 Bili-Mux 图标"></p>
+
 [English](./README.en.md) | **中文**
 
 一个 Manifest V3 Chrome 扩展，在 B站视频页注入下载面板，支持封面下载、DASH 音视频流分离保存、浏览器内 ffmpeg.wasm 合成 MP4、FLV 合并下载与分P批量下载。
