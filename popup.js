@@ -15,7 +15,7 @@ const BILI_VIDEO_URLS = [
 document.addEventListener('DOMContentLoaded', () => {
   // 版本号
   chrome.runtime.getManifest && (document.getElementById('ver').textContent =
-    'v' + (chrome.runtime.getManifest().version || '1.0.0'));
+    'v' + (chrome.runtime.getManifest().version || '1.1.0'));
 
   // 打开 B站视频页
   document.getElementById('open').addEventListener('click', async () => {

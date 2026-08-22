@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "B站视频下载助手(自用)",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "解析B站视频直链与封面，支持分P批量、FLV合并下载、视频流与音频流分别保存。仅供个人学习留存，勿二次分发。",
   "icons": {
     "16": "icons/icon16.png",

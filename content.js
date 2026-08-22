@@ -499,6 +499,11 @@ function observeToolbar(togglePanel) {
   let viewData = null;     // view 接口结果
   let dashData = null;     // playurl DASH 结果
   let flvData = null;      // playurl FLV 结果
+  const _ver = (chrome.runtime.getManifest && chrome.runtime.getManifest().version) || '1.1.0';
+  console.info('%c bili-dl %c v' + _ver + ' %c 加载成功 ',
+    'padding: 2px 6px; border-radius: 3px 0 0 3px; color: #fff; background: #fb7299; font-weight: bold;',
+    'padding: 2px 6px; color: #fff; background: #FF9999; font-weight: bold;',
+    'padding: 2px 6px; border-radius: 0 3px 3px 0; color: #fff; background: #4CAF50; font-weight: bold;');
   console.log('[bili-dl] content script 注入成功，bvid =', bvid);
 
   function setStatus(t) { elStatus.textContent = t || ''; }
