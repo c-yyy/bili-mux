@@ -275,6 +275,10 @@ const STYLE = `
   .close-btn { flex: none; width: 28px; height: 28px; padding: 0; line-height: 1; font-size: 18px; font-weight: 700;
     background: #fff; color: #1a1a1a; border: 2px solid #000; border-radius: 6px; box-shadow: 2px 2px 0 #000; cursor: pointer; }
   .close-btn:active { transform: translate(1px,1px); box-shadow: 1px 1px 0 #000; }
+  .subtitle { font-size: 11px; color: #6b6b6b; margin: -2px 0 8px 0; line-height: 1.55; word-break: break-all;
+    font-variant-numeric: tabular-nums; }
+  .subtitle .id { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; color: #1a1a1a; }
+  .subtitle .hint { color: #6b6b6b; }
   .cover { width: 100%; border: 2px solid #000; border-radius: 6px; margin-bottom: 10px; display: none; }
   .row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
   button.act { flex: 1 1 auto; background: #fff; border: 2px solid #000; border-radius: 6px; padding: 7px 8px; cursor: pointer; font-weight: 600; box-shadow: 2px 2px 0 #000; font-size: 13px; color: #1a1a1a; }
@@ -317,6 +321,7 @@ function buildPanel(host) {
         <div class="title" id="title">解析中…</div>
         <button class="close-btn" id="btn-close" type="button" aria-label="关闭">×</button>
       </div>
+      <div class="subtitle" id="subtitle"></div>
       <img class="cover" id="cover" alt="封面"/>
       <div class="row">
         <button class="act primary" id="btn-cover">下载封面</button>
@@ -557,6 +562,9 @@ function observeToolbar(togglePanel) {
     try {
       viewData = await fetchView(bvid);
       elTitle.textContent = viewData.title;
+      // 副标题：AV/BV 号 + 封面右键操作提示
+      const aid = viewData.aid || '';
+      $('subtitle').innerHTML = '<span class="id">AV' + aid + ' / ' + bvid + '</span> <span class="hint">（封面图可右键复制或保存）</span>';
       if (viewData.pic) {
         elCover.src = viewData.pic;
         elCover.style.display = 'block';
