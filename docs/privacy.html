@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>哔哩喵 (Bili-Mux) 隐私政策</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, "Helvetica Neue", Arial, "PingFang SC", "Microsoft YaHei", sans-serif; background: #f4f5f7; color: #1f2229; line-height: 1.7; }
+    .container { max-width: 760px; margin: 0 auto; padding: 48px 24px 80px; }
+    .header { text-align: center; margin-bottom: 40px; padding-bottom: 24px; border-bottom: 2px solid #fb7299; }
+    .header img { width: 96px; height: 96px; border-radius: 20px; margin-bottom: 16px; }
+    .header h1 { font-size: 28px; color: #1f2229; }
+    .header .subtitle { color: #9499a0; font-size: 14px; margin-top: 4px; }
+    .updated { text-align: center; color: #9499a0; font-size: 13px; margin-bottom: 32px; }
+    h2 { font-size: 20px; margin: 32px 0 12px; padding-left: 12px; border-left: 4px solid #fb7299; color: #1f2229; }
+    h3 { font-size: 16px; margin: 20px 0 8px; color: #333; }
+    p, li { font-size: 15px; color: #505050; }
+    ul { padding-left: 24px; margin: 8px 0 16px; }
+    li { margin: 4px 0; }
+    .highlight { background: #fff3f6; border-left: 3px solid #fb7299; padding: 12px 16px; border-radius: 0 6px 6px 0; margin: 16px 0; font-size: 15px; color: #505050; }
+    table { width: 100%; border-collapse: collapse; margin: 12px 0 20px; font-size: 14px; }
+    th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid #e3e5e7; }
+    th { background: #fb7299; color: #fff; font-weight: 600; }
+    td { color: #505050; }
+    .contact { background: #fff; border-radius: 8px; padding: 20px 24px; margin-top: 32px; box-shadow: 0 1px 4px rgba(0,0,0,0.06); }
+    .lang-switch { text-align: center; margin-bottom: 24px; }
+    .lang-switch a { display: inline-block; padding: 6px 16px; margin: 0 4px; border-radius: 6px; text-decoration: none; font-size: 14px; transition: all 0.2s; }
+    .lang-switch a.active { background: #fb7299; color: #fff; }
+    .lang-switch a:not(.active) { background: #fff; color: #fb7299; border: 1px solid #fb7299; }
+    .lang-section { display: none; }
+    .lang-section.active { display: block; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <img src="../icons/icon128.png" alt="哔哩喵 Bili-Mux">
+      <h1>哔哩喵 (Bili-Mux)</h1>
+      <div class="subtitle">Chrome Extension Privacy Policy</div>
+    </div>
+
+    <div class="lang-switch">
+      <a href="#" class="active" onclick="switchLang('zh', event)">中文</a>
+      <a href="#" onclick="switchLang('en', event)">English</a>
+    </div>
+
+    <p class="updated">最后更新：2026-08-22 &nbsp;|&nbsp; Last updated: 2026-08-22</p>
+
+    <!-- 中文 -->
+    <div class="lang-section active" id="lang-zh">
+
+      <div class="highlight">
+        哔哩喵 <strong>不收集、不存储、不上传</strong>任何用户个人数据。所有操作均在你的浏览器内完成。
+      </div>
+
+      <h2>1. 数据收集</h2>
+      <p>哔哩喵不收集任何类型的用户个人数据，包括但不限于：</p>
+      <ul>
+        <li>不收集个人信息（姓名、邮箱、手机号等）</li>
+        <li>不收集浏览历史、搜索记录或点击行为</li>
+        <li>不收集设备信息（设备型号、操作系统、IP 地址等）</li>
+        <li>不收集任何可用于识别用户身份的数据</li>
+      </ul>
+
+      <h2>2. 数据使用</h2>
+      <p>扩展运行过程中涉及的数据处理如下：</p>
+
+      <h3>2.1 B站 API 请求</h3>
+      <p>扩展在用户打开 B站视频页时，使用用户浏览器中已有的 B站登录 Cookie 调用 B站官方 API（view、playurl、nav 接口），获取视频信息和播放地址。这些请求直接发送至 B站服务器，扩展本身不中转、不存储任何响应数据。</p>
+
+      <h3>2.2 媒体流获取</h3>
+      <p>用户选择留存视频时，扩展从 B站 CDN（bilivideo.com）获取媒体流数据。该过程使用浏览器原生 fetch 请求，携带用户的现有 Cookie 和 Referer 头。获取的数据仅在浏览器内存中临时处理，合成完成后保存为本地文件。</p>
+
+      <h3>2.3 浏览器内合成</h3>
+      <p>合成 MP4 时，音视频流数据在扩展的 content script → Service Worker → Offscreen Document 之间通过 base64 编码传递（Chrome 消息机制不支持二进制传输）。所有数据仅在扩展内部进程间流转，不发送至任何外部服务器。</p>
+
+      <h3>2.4 文件保存</h3>
+      <p>留存完成的文件通过 Chrome 下载 API 保存至用户指定的本地下载目录。扩展不读取、不修改已有文件。</p>
+
+      <h2>3. 第三方服务</h2>
+      <p>扩展不包含任何第三方分析、追踪或广告 SDK。</p>
+      <p>涉及的第三方组件：</p>
+      <ul>
+        <li><strong>ffmpeg.wasm</strong>（@ffmpeg/core-st）：开源 WebAssembly 库，用于在浏览器内合成 MP4，完全在本地运行，不进行任何网络通信</li>
+      </ul>
+      <p>涉及的第三方 API：</p>
+      <ul>
+        <li><strong>B站 API</strong>（api.bilibili.com）：调用 B站官方接口获取视频信息与播放地址，使用用户已有登录态</li>
+        <li><strong>B站 CDN</strong>（bilivideo.com、hdslb.com）：获取媒体流与封面图片，使用用户已有登录态</li>
+      </ul>
+
+      <h2>4. 数据存储</h2>
+      <p>扩展不使用 chrome.storage、localStorage、IndexedDB 或任何持久化存储保存用户数据。扩展不维护任何形式的用户数据库。每次浏览器关闭后，所有临时数据即被清除。</p>
+
+      <h2>5. 权限说明</h2>
+      <table>
+        <tr><th>权限</th><th>用途</th></tr>
+        <tr><td>downloads</td><td>将用户选择留存的文件保存至本地下载目录</td></tr>
+        <tr><td>scripting</td><td>在 bilibili.com 视频页注入操作面板 UI</td></tr>
+        <tr><td>declarativeNetRequestWithHostAccess</td><td>为 bilivideo.com 媒体请求注入 Referer 头</td></tr>
+        <tr><td>offscreen</td><td>创建 Offscreen Document 运行 ffmpeg.wasm 合成 MP4</td></tr>
+        <tr><td>host_permissions: bilibili.com</td><td>调用 B站 API 获取视频信息与播放地址</td></tr>
+        <tr><td>host_permissions: bilivideo.com</td><td>获取媒体流数据用于本地留存</td></tr>
+        <tr><td>host_permissions: hdslb.com</td><td>获取视频封面图片</td></tr>
+      </table>
+
+      <h2>6. 数据安全</h2>
+      <p>扩展的所有网络请求均通过浏览器原生网络栈发起，受浏览器安全策略保护。扩展不存储任何 Cookie 或会话令牌。跨进程传递的二进制数据使用 base64 编码，仅在扩展内部进程间流转。</p>
+
+      <h2>7. 儿童隐私</h2>
+      <p>本扩展不面向 13 岁以下儿童，也不有意收集儿童的任何信息。</p>
+
+      <h2>8. 政策变更</h2>
+      <p>如本隐私政策有更新，修改后的政策将在此页面发布，并更新顶部的"最后更新"日期。继续使用扩展即视为接受更新后的政策。</p>
+
+      <div class="contact">
+        <h3>联系方式</h3>
+        <p>如有隐私相关问题，可通过以下方式联系：</p>
+        <ul>
+          <li>GitHub Issues：<a href="https://github.com/c-yyy/bili-mux/issues">github.com/c-yyy/bili-mux/issues</a></li>
+        </ul>
+      </div>
+
+    </div>
+
+    <!-- English -->
+    <div class="lang-section" id="lang-en">
+
+      <div class="highlight">
+        Bili-Mux <strong>does not collect, store, or upload</strong> any user personal data. All processing happens within your browser.
+      </div>
+
+      <h2>1. Data Collection</h2>
+      <p>Bili-Mux does not collect any type of user personal data, including but not limited to:</p>
+      <ul>
+        <li>Personal information (name, email, phone number, etc.)</li>
+        <li>Browsing history, search records, or click behavior</li>
+        <li>Device information (model, OS, IP address, etc.)</li>
+        <li>Any data that could be used to identify users</li>
+      </ul>
+
+      <h2>2. Data Usage</h2>
+      <p>The data processing involved during extension operation is as follows:</p>
+
+      <h3>2.1 Bilibili API Requests</h3>
+      <p>When a user opens a Bilibili video page, the extension uses the user's existing Bilibili login cookies to call official Bilibili APIs (view, playurl, nav endpoints) to obtain video information and playback URLs. These requests are sent directly to Bilibili servers. The extension itself does not relay or store any response data.</p>
+
+      <h3>2.2 Media Stream Retrieval</h3>
+      <p>When a user chooses to save a video, the extension retrieves media stream data from Bilibili CDN (bilivideo.com). This process uses the browser's native fetch with the user's existing cookies and Referer header. The retrieved data is processed temporarily in browser memory and saved as a local file after muxing.</p>
+
+      <h3>2.3 In-browser Muxing</h3>
+      <p>During MP4 muxing, audio/video stream data is passed between the extension's content script, Service Worker, and Offscreen Document via base64 encoding (Chrome's messaging mechanism does not support binary transfer). All data flows only between internal extension processes and is never sent to any external server.</p>
+
+      <h3>2.4 File Saving</h3>
+      <p>Completed files are saved to the user's designated local download directory via the Chrome Downloads API. The extension does not read or modify existing files.</p>
+
+      <h2>3. Third-Party Services</h2>
+      <p>The extension does not contain any third-party analytics, tracking, or advertising SDKs.</p>
+      <p>Third-party components used:</p>
+      <ul>
+        <li><strong>ffmpeg.wasm</strong> (@ffmpeg/core-st): An open-source WebAssembly library used for in-browser MP4 muxing. It runs entirely locally and does not make any network communications.</li>
+      </ul>
+      <p>Third-party APIs used:</p>
+      <ul>
+        <li><strong>Bilibili API</strong> (api.bilibili.com): Calls official Bilibili endpoints to obtain video information and playback URLs, using the user's existing login session.</li>
+        <li><strong>Bilibili CDN</strong> (bilivideo.com, hdslb.com): Retrieves media streams and cover images, using the user's existing login session.</li>
+      </ul>
+
+      <h2>4. Data Storage</h2>
+      <p>The extension does not use chrome.storage, localStorage, IndexedDB, or any persistent storage to save user data. The extension does not maintain any form of user database. All temporary data is cleared when the browser is closed.</p>
+
+      <h2>5. Permissions</h2>
+      <table>
+        <tr><th>Permission</th><th>Purpose</th></tr>
+        <tr><td>downloads</td><td>Save user-selected files to the local download directory</td></tr>
+        <tr><td>scripting</td><td>Inject the operation panel UI into bilibili.com video pages</td></tr>
+        <tr><td>declarativeNetRequestWithHostAccess</td><td>Inject Referer header for bilivideo.com media requests</td></tr>
+        <tr><td>offscreen</td><td>Create an Offscreen Document to run ffmpeg.wasm for MP4 muxing</td></tr>
+        <tr><td>host_permissions: bilibili.com</td><td>Call Bilibili APIs for video info and playback URLs</td></tr>
+        <tr><td>host_permissions: bilivideo.com</td><td>Retrieve media stream data for local saving</td></tr>
+        <tr><td>host_permissions: hdslb.com</td><td>Retrieve video cover images</td></tr>
+      </table>
+
+      <h2>6. Data Security</h2>
+      <p>All network requests made by the extension are initiated through the browser's native network stack and are protected by browser security policies. The extension does not store any cookies or session tokens. Binary data transferred between processes is base64-encoded and flows only between internal extension processes.</p>
+
+      <h2>7. Children's Privacy</h2>
+      <p>This extension is not directed at children under 13 and does not knowingly collect any information from children.</p>
+
+      <h2>8. Policy Changes</h2>
+      <p>If this privacy policy is updated, the modified policy will be posted on this page with the "Last updated" date updated accordingly. Continued use of the extension constitutes acceptance of the updated policy.</p>
+
+      <div class="contact">
+        <h3>Contact</h3>
+        <p>For privacy-related questions, you can reach us at:</p>
+        <ul>
+          <li>GitHub Issues: <a href="https://github.com/c-yyy/bili-mux/issues">github.com/c-yyy/bili-mux/issues</a></li>
+        </ul>
+      </div>
+
+    </div>
+
+  </div>
+
+  <script>
+    function switchLang(lang, e) {
+      e.preventDefault();
+      document.querySelectorAll('.lang-switch a').forEach(a => a.classList.remove('active'));
+      document.querySelectorAll('.lang-section').forEach(s => s.classList.remove('active'));
+      event.target.classList.add('active');
+      document.getElementById('lang-' + lang).classList.add('active');
+    }
+  </script>
+</body>
+</html>
