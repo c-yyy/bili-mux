@@ -123,8 +123,10 @@ const QN_LABEL = {
 
 /* ============================ 接口调用 ============================ */
 function getBvid() {
-  const m = location.pathname.match(/BV[0-9A-Za-z]+/);
-  return m ? m[0] : null;
+  // 提取 /video/ 之后的 ID（兼容老 av 链接），匹配不到则返回 null 让插件安静退出。
+  // 命中后保留 URL 原始大小写——B 站 BV 号按位大小写敏感，av 前缀小写为常规形态。
+  const m = location.pathname.match(/\/video\/(BV[0-9A-Za-z]+|av\d+)/i);
+  return m ? m[1] : null;
 }
 
 async function fetchView(bvid) {
@@ -562,9 +564,8 @@ function observeToolbar(togglePanel) {
     try {
       viewData = await fetchView(bvid);
       elTitle.textContent = viewData.title;
-      // 副标题：AV/BV 号 + 封面右键操作提示
-      const aid = viewData.aid || '';
-      $('subtitle').innerHTML = '<span class="id">AV' + aid + ' / ' + bvid + '</span> <span class="hint">（封面图可右键复制或保存）</span>';
+      // 副标题：URL 中的视频 ID（BVID / 老格式 avid）+ 封面右键操作提示
+      $('subtitle').innerHTML = '<span class="id">' + bvid + '</span> <span class="hint">（封面图可右键复制或保存）</span>';
       if (viewData.pic) {
         elCover.src = viewData.pic;
         elCover.style.display = 'block';
