@@ -368,15 +368,15 @@ function buildPanel(host) {
 // 把触发按钮注入到 B站 .video-toolbar-left-main 容器的末尾，并克隆容器内参考元素的
 // 样式，使它与“点赞/投币/收藏/分享”等其它元素视觉一致。
 function injectToolbarStyle() {
-  if (document.getElementById('bili-dl-style')) return;
+  if (document.getElementById('bili-mux-style')) return;
   const style = document.createElement('style');
-  style.id = 'bili-dl-style';
+  style.id = 'bili-mux-style';
   style.textContent = `
-    .bili-dl-item { display: inline-flex !important; align-items: center; gap: 4px;
+    .bili-mux-item { display: inline-flex !important; align-items: center; gap: 4px;
       box-sizing: border-box; user-select: none; cursor: pointer; }
-    .bili-dl-item svg { width: 20px; height: 20px; display: block; flex: none; }
-    .bili-dl-item .bili-dl-label { font-size: 13px; line-height: 1; }
-    .bili-dl-item:hover { color: #fb7299 !important; }
+    .bili-mux-item svg { width: 20px; height: 20px; display: block; flex: none; }
+    .bili-mux-item .bili-mux-label { font-size: 13px; line-height: 1; }
+    .bili-mux-item:hover { color: #fb7299 !important; }
   `;
   document.head.appendChild(style);
 }
@@ -384,14 +384,14 @@ function injectToolbarStyle() {
 function injectToggle(togglePanel) {
   const toolbar = document.querySelector('.video-toolbar-left-main');
   if (!toolbar) return false;
-  if (document.getElementById('bili-dl-toggle')) return true;
+  if (document.getElementById('bili-mux-toggle')) return true;
 
   const btn = document.createElement('div');
-  btn.id = 'bili-dl-toggle';
-  btn.className = 'bili-dl-item';
+  btn.id = 'bili-mux-toggle';
+  btn.className = 'bili-mux-item';
   btn.setAttribute('role', 'button');
-  btn.setAttribute('title', 'B站视频下载助手');
-  btn.innerHTML = ICON_SVG + '<span class="bili-dl-label">下载</span>';
+  btn.setAttribute('title', '哔哩喵 (Bili-Mux)');
+  btn.innerHTML = ICON_SVG + '<span class="bili-mux-label">下载</span>';
 
   // 克隆容器里第一个元素的 computed style，让本按钮与兄弟元素同字体/颜色/间距
   // （cursor 除外：克隆来的 default 会盖掉手型光标，这里强制 pointer）
@@ -430,26 +430,26 @@ function observeToolbar(togglePanel) {
     setTimeout(() => clearInterval(iv), 30000);
   }
   const mo = new MutationObserver(() => {
-    if (!document.getElementById('bili-dl-toggle')) injectToggle(togglePanel);
+    if (!document.getElementById('bili-mux-toggle')) injectToggle(togglePanel);
   });
   mo.observe(document.documentElement, { childList: true, subtree: true });
 }
 
 /* ============================ 主逻辑 ============================ */
 (function main() {
-  if (document.getElementById('bili-dl-host')) return; // 防止重复注入
+  if (document.getElementById('bili-mux-host')) return; // 防止重复注入
   const bvid = getBvid();
   if (!bvid) return;
 
   const host = document.createElement('div');
-  host.id = 'bili-dl-host';
+  host.id = 'bili-mux-host';
   document.body.appendChild(host);
   const root = buildPanel(host);
   const panelEl = root.getElementById('panel');
-  // 依据触发按钮（#bili-dl-toggle）的视口坐标，把面板放到其右侧、顶部平齐；
+  // 依据触发按钮（#bili-mux-toggle）的视口坐标，把面板放到其右侧、顶部平齐；
   // 若右侧放不下则翻到按钮左侧。面板为 fixed，正好吃 getBoundingClientRect 的视口坐标。
   function positionPanelToButton() {
-    const btn = document.getElementById('bili-dl-toggle');
+    const btn = document.getElementById('bili-mux-toggle');
     if (!btn) return;
     const r = btn.getBoundingClientRect();
     const gap = 8;
@@ -474,7 +474,7 @@ function observeToolbar(togglePanel) {
   document.addEventListener('click', (e) => {
     if (!panelEl.classList.contains('show')) return;
     const path = (e.composedPath && e.composedPath()) || [];
-    const toggle = document.getElementById('bili-dl-toggle');
+    const toggle = document.getElementById('bili-mux-toggle');
     if (host && path.indexOf(host) !== -1) return;        // 点击面板内部
     if (toggle && path.indexOf(toggle) !== -1) return;    // 点击触发按钮
     closePanel();
@@ -500,11 +500,11 @@ function observeToolbar(togglePanel) {
   let dashData = null;     // playurl DASH 结果
   let flvData = null;      // playurl FLV 结果
   const _ver = (chrome.runtime.getManifest && chrome.runtime.getManifest().version) || '1.1.0';
-  console.info('%c bili-dl %c v' + _ver + ' %c 加载成功 ',
+  console.info('%c bili-mux %c v' + _ver + ' %c 加载成功 ',
     'padding: 2px 6px; border-radius: 3px 0 0 3px; color: #fff; background: #fb7299; font-weight: bold;',
     'padding: 2px 6px; color: #fff; background: #FF9999; font-weight: bold;',
     'padding: 2px 6px; border-radius: 0 3px 3px 0; color: #fff; background: #4CAF50; font-weight: bold;');
-  console.log('[bili-dl] content script 注入成功，bvid =', bvid);
+  console.log('[bili-mux] content script 注入成功，bvid =', bvid);
 
   function setStatus(t) { elStatus.textContent = t || ''; }
 
@@ -682,13 +682,13 @@ function observeToolbar(togglePanel) {
     try {
       // 顺序拉取：先视频（进度 0→50%），再音频（50%→100%），不并行
       setStatus('拉取视频流…');
-      console.log('[bili-dl] mux: 开始拉取视频流', String(pickVideoUrls()[0]).slice(0, 60) + '…');
+      console.log('[bili-mux] mux: 开始拉取视频流', String(pickVideoUrls()[0]).slice(0, 60) + '…');
       vBuf = await fetchStream(pickVideoUrls()[0], (r) => setBar('m', r * 0.5));
-      console.log('[bili-dl] mux: 视频流拉取完成', vBuf.byteLength, '字节');
+      console.log('[bili-mux] mux: 视频流拉取完成', vBuf.byteLength, '字节');
       setStatus('视频流已拉取，拉取音频流…');
-      console.log('[bili-dl] mux: 开始拉取音频流', String(pickAudioUrls()[0]).slice(0, 60) + '…');
+      console.log('[bili-mux] mux: 开始拉取音频流', String(pickAudioUrls()[0]).slice(0, 60) + '…');
       aBuf = await fetchStream(pickAudioUrls()[0], (r) => setBar('m', 0.5 + r * 0.5));
-      console.log('[bili-dl] mux: 音频流拉取完成', aBuf.byteLength, '字节');
+      console.log('[bili-mux] mux: 音频流拉取完成', aBuf.byteLength, '字节');
     } catch (e) {
       // 拉流失败：给出明确提示，不进入等待、不乱回退，避免按钮卡死
       setStatus('拉取流失败: ' + (e && e.message) + '（可改用 FLV 合并或分离下载）');
@@ -697,12 +697,12 @@ function observeToolbar(togglePanel) {
     }
     setStatus('浏览器内合成中 0%');
     setBar('m', 0); // 交给 offscreen 的合成进度（0→1）接管
-    console.log('[bili-dl] mux: 发送 bili-mux 到 background, video', vBuf.byteLength, 'audio', aBuf.byteLength);
+    console.log('[bili-mux] mux: 发送 bili-mux 到 background, video', vBuf.byteLength, 'audio', aBuf.byteLength);
     // base64 编码后发送（消息通道不支持 ArrayBuffer）；带 lastError 检查避免静默丢消息
     const payload = { type: 'bili-mux', videoB64: bufToB64(vBuf), audioB64: bufToB64(aBuf) };
     vBuf = aBuf = null; // 尽早释放原始 buffer，base64 期间内存占用翻倍
     chrome.runtime.sendMessage(payload, () => {
-      if (chrome.runtime.lastError) console.error('[bili-dl] mux: 发送 bili-mux 失败', chrome.runtime.lastError.message);
+      if (chrome.runtime.lastError) console.error('[bili-mux] mux: 发送 bili-mux 失败', chrome.runtime.lastError.message);
     });
     // 等待 background 定向转发的合成结果（下方 runtime 监听 resolve），期间按钮保持置灰；
     // 加 180s 超时保护，避免极端情况下按钮卡死
@@ -711,7 +711,7 @@ function observeToolbar(togglePanel) {
       const finish = () => { if (done) return; done = true; _muxResolver = null; res(); };
       _muxResolver = finish;
       setTimeout(() => {
-        if (!done) { console.error('[bili-dl] mux: 等待合成结果超时(180s)'); setStatus('合成等待超时，仍在后台进行可稍候，或点按钮重试 / 改用分离下载'); }
+        if (!done) { console.error('[bili-mux] mux: 等待合成结果超时(180s)'); setStatus('合成等待超时，仍在后台进行可稍候，或点按钮重试 / 改用分离下载'); }
         finish();
       }, 180000);
     });
@@ -780,7 +780,7 @@ function observeToolbar(togglePanel) {
       if (_muxResolver) { const r = _muxResolver; _muxResolver = null; r(); } // 释放 guarded 锁
       if (msg.ok && msg.mp4B64) {
         const mp4 = b64ToU8(msg.mp4B64);
-        console.log('[bili-dl] mux: 收到合成结果 ok, mp4 字节 =', mp4.length);
+        console.log('[bili-mux] mux: 收到合成结果 ok, mp4 字节 =', mp4.length);
         const blob = new Blob([mp4], { type: 'video/mp4' });
         downloadBlob(blob, `${sanitize(viewData.title)}_${elQn.value}.mp4`);
         setBar('m', 1);
@@ -789,8 +789,8 @@ function observeToolbar(togglePanel) {
         // 合成失败不再自动把音视频流下载到本地（用户要求）：内存中已拉取的流直接丢弃，
         // 仅在状态栏与控制台给出明确原因；如需原始流可手动点“下载视频流/音频流”。
         const reason = (msg.error || '未知原因').trim();
-        console.error('[bili-dl] mux: 浏览器合成失败，原因 =\n' + reason);
-        setStatus('浏览器内合成失败。原因: ' + reason + '（详见控制台 [bili-dl] 日志）');
+        console.error('[bili-mux] mux: 浏览器合成失败，原因 =\n' + reason);
+        setStatus('浏览器内合成失败。原因: ' + reason + '（详见控制台 [bili-mux] 日志）');
       }
       return;
     }

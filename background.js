@@ -22,7 +22,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     _offscreenReady = true;
     const rs = _offscreenReadyResolvers.splice(0);
     rs.forEach((r) => r());
-    console.log('[bili-bg] 收到 offscreen 就绪信号');
+    console.log('[bili-mux] 收到 offscreen 就绪信号');
     return false;
   }
 
@@ -60,18 +60,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       // 兜底超时：offscreen 长时间无响应时主动结束，避免 SW 端口永久挂起
       setTimeout(() => {
         if (_muxPending.has(requestId)) {
-          console.error('[bili-bg] 合成等待 offscreen 超时(150s), requestId =', requestId);
+          console.error('[bili-mux] 合成等待 offscreen 超时(150s), requestId =', requestId);
           _muxPending.delete(requestId);
           resolve({ ok: false, error: '合成等待超时（offscreen 无响应，可能是 ffmpeg 加载失败或文档被关闭）' });
         }
       }, 150000);
     });
 
-    console.log('[bili-bg] 收到 bili-mux, requestId =', requestId, 'tabId =', tabId,
+    console.log('[bili-mux] 收到 bili-mux, requestId =', requestId, 'tabId =', tabId,
       'videoB64', msg.videoB64 && msg.videoB64.length, 'audioB64', msg.audioB64 && msg.audioB64.length);
 
     ensureOffscreen().then(() => {
-      console.log('[bili-bg] offscreen 就绪，转发 bili-mux 给 offscreen, requestId =', requestId);
+      console.log('[bili-mux] offscreen 就绪，转发 bili-mux 给 offscreen, requestId =', requestId);
       return chrome.runtime.sendMessage({
         type: 'bili-mux',
         replyTo: requestId,
@@ -79,7 +79,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         audioB64: msg.audioB64
       });
     }).catch((e) => {
-      console.error('[bili-bg] ensureOffscreen / 转发 失败', e && e.message);
+      console.error('[bili-mux] ensureOffscreen / 转发 失败', e && e.message);
       const resolve = _muxPending.get(requestId);
       if (resolve) {
         _muxPending.delete(requestId);
@@ -89,7 +89,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
     // 收尾：拿到结果后既转给发起标签（触发下载），也关闭 content→SW 的初始端口
     resultP.then((result) => {
-      console.log('[bili-bg] 合成结束，转发给 content tabId =', tabId, 'ok =', result.ok);
+      console.log('[bili-mux] 合成结束，转发给 content tabId =', tabId, 'ok =', result.ok);
       chrome.tabs.sendMessage(tabId, { type: 'bili-mux-result', routed: true, ...result }).catch(() => {});
       try { sendResponse({ ok: !!result.ok }); } catch (e) {} // 仅确认；mp4 走上面的 tabs 通道，避免重复传大块
       _muxTabs.delete(requestId);
@@ -104,7 +104,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   //      避免重复发送。
   if ((msg.type === 'bili-mux-result' || msg.type === 'bili-mux-progress') && sender && !sender.tab) {
     const tabId = _muxTabs.get(msg.replyTo);
-    console.log('[bili-bg] 收到 offscreen', msg.type, 'replyTo =', msg.replyTo, '映射 tabId =', tabId,
+    console.log('[bili-mux] 收到 offscreen', msg.type, 'replyTo =', msg.replyTo, '映射 tabId =', tabId,
       'ok =', msg.ok);
     if (msg.type === 'bili-mux-result') {
       const resolve = _muxPending.get(msg.replyTo);
@@ -160,7 +160,7 @@ async function ensureOffscreen() {
   // 先关掉再重建，确保能收到一次全新的就绪 ping。
   try {
     if (typeof chrome.offscreen?.hasDocument === 'function' && await chrome.offscreen.hasDocument()) {
-      console.log('[bili-bg] 检测到已有 offscreen 文档（可能 SW 重启导致信号丢失），先关闭再重建');
+      console.log('[bili-mux] 检测到已有 offscreen 文档（可能 SW 重启导致信号丢失），先关闭再重建');
       await chrome.offscreen.closeDocument();
     }
   } catch (e) { /* 忽略 */ }
@@ -174,13 +174,13 @@ async function ensureOffscreen() {
       reasons: [reason],
       justification: '在扩展内用 ffmpeg.wasm 将 DASH 音视频流封装为单个 MP4'
     });
-    console.log('[bili-bg] Offscreen 文档已创建，等待就绪信号…');
+    console.log('[bili-mux] Offscreen 文档已创建，等待就绪信号…');
     await waitForOffscreenReady(8000);
     if (!_offscreenReady) throw new Error('offscreen 就绪信号超时（offscreen.js 可能未加载或被 CSP 拦截）');
-    console.log('[bili-bg] Offscreen 已就绪');
+    console.log('[bili-mux] Offscreen 已就绪');
     return true;
   } catch (e) {
-    console.error('[bili-bg] 创建/等待 Offscreen 失败:', e && e.message);
+    console.error('[bili-mux] 创建/等待 Offscreen 失败:', e && e.message);
     _offscreenReady = false;
     throw e; // 让上层 catch 回退，而不是静默置就绪导致 content 干等 180s
   }

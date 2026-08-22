@@ -1,4 +1,4 @@
-# B站视频下载助手
+# 哔哩喵 (Bili-Mux)
 
 [English](./README.en.md) | **中文**
 

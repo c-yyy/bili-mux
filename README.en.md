@@ -1,4 +1,4 @@
-# Bilibili Video Downloader
+# Bili-Mux (哔哩喵)
 
 **English** | [中文](./README.md)
 
