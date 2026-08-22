@@ -174,11 +174,13 @@ function downloadBlob(blob, filename) {
 // 而 offscreen.html 是普通扩展页面（chrome-extension://）不受此限制。
 // 协议：bili-save-init（确保 offscreen 就绪）→ bili-save-chunk × N → bili-save-go。
 // 每块 16MB 原始数据（base64 后约 21.3MB，低于 64MiB 单消息上限），逐块 await 形成流控。
+// 返回 bili-save-go 的响应（含 converted 标记：FLV 是否已转封装为 MP4）。
 async function saveViaOffscreen(bytes, filename, mime) {
   const requestId = 'save_' + Date.now() + '_' + Math.random().toString(36).slice(2);
   const sendMsg = (payload) => new Promise((res, rej) => {
-    chrome.runtime.sendMessage(payload, () => {
-      chrome.runtime.lastError ? rej(new Error(chrome.runtime.lastError.message)) : res();
+    chrome.runtime.sendMessage(payload, (resp) => {
+      if (chrome.runtime.lastError) return rej(new Error(chrome.runtime.lastError.message));
+      res(resp);
     });
   });
   await sendMsg({ type: 'bili-save-init', requestId, filename, mime });
@@ -192,7 +194,9 @@ async function saveViaOffscreen(bytes, filename, mime) {
     }
     await sendMsg({ type: 'bili-save-chunk', requestId, index: i, b64: btoa(bin) });
   }
-  await sendMsg({ type: 'bili-save-go', requestId });
+  const goResp = await sendMsg({ type: 'bili-save-go', requestId });
+  if (goResp && goResp.ok === false) throw new Error(goResp.error || 'offscreen 落地失败');
+  return goResp || {};
 }
 
 // 单独保存 DASH 音视频流（.m4s）：走 content 内 fetch（带页面 Referer 通过 CDN 鉴权），
@@ -376,7 +380,7 @@ function buildPanel(host) {
         <button class="act" id="btn-pages">分P列表</button>
       </div>
       <div class="row">
-        <button class="act" id="btn-flvm">FLV 合并下载（低码率）</button>
+        <button class="act" id="btn-flvm">兼容下载（低码率）</button>
       </div>
       <div class="flvbox" id="flvbox">
         <div class="pbar"><span class="pl">下载 FLV</span><div class="track"><div class="fill" id="pb-f"></div></div><span class="pv" id="pct-f">0%</span></div>
@@ -388,7 +392,7 @@ function buildPanel(host) {
         <button class="act" id="btn-audio">下载音频流</button>
       </div>
       <div class="row">
-        <button class="act primary" id="btn-mux">合成 MP4（高码率）</button>
+        <button class="act primary" id="btn-mux">高级下载（高码率）</button>
       </div>
       <div class="flvbox" id="muxbox">
         <div class="pbar"><span class="pl">合成 MP4</span><div class="track"><div class="fill" id="pb-m"></div></div><span class="pv" id="pct-m">0%</span></div>
@@ -398,7 +402,6 @@ function buildPanel(host) {
         <div class="row"><button class="act primary" id="btn-batch">批量下载选中</button></div>
       </div>
       <div class="status" id="status"></div>
-      <div class="fmt-help"><b>FLV 与 DASH 流</b>：<b>FLV 合并</b>取旧版 HTTP-FLV 流（音视频已封装进同一容器），码率较低、体积小、下载快；<b>DASH 流</b>视频与音频分两个文件保存，可拿到原画画质乃至 4K 高码率，文件较大。</div>
       <div class="resbox">
         <div class="res-title">实时资源占用</div>
         <div class="res-grid">
@@ -407,6 +410,7 @@ function buildPanel(host) {
         </div>
         <div class="res-note">内存为本扩展运行内存；网络为本工具实测下载速率。</div>
       </div>
+      <div class="fmt-help"><b>FLV 与 DASH 流</b>：<b>FLV 合并</b>取旧版 HTTP-FLV 流（音视频已封装进同一容器），码率较低、体积小、下载快；<b>DASH 流</b>视频与音频分两个文件保存，可拿到原画画质乃至 4K 高码率，文件较大。</div>
     </div>`;
   return root;
 }
@@ -801,7 +805,7 @@ function observeToolbar(togglePanel) {
     });
   });
 
-  // FLV 合并下载（无需 ffmpeg，二进制拼接即得可播放文件）
+  // FLV 合并下载（二进制拼接即得可播放文件；offscreen 会自动转封装为 MP4 提升兼容性，失败回退原 FLV）
   guarded($('btn-flvm'), async () => {
     if (!flvData || !flvData.durl || !flvData.durl.length) return setStatus('该视频不支持 FLV 合并（可能仅 DASH）');
     $('flvbox').style.display = 'block';
@@ -810,8 +814,11 @@ function observeToolbar(togglePanel) {
       const urls = flvData.durl.map(d => d.url);
       const bytes = await fetchAndConcat(urls, (ratio) => setBar('f', ratio));
       setBar('f', 1);
-      await saveViaOffscreen(bytes, `${sanitize(viewData.title)}.flv`, 'video/x-flv');
-      setStatus('FLV 已合并并触发下载');
+      setStatus('转封装为 MP4…');
+      const resp = await saveViaOffscreen(bytes, `${sanitize(viewData.title)}.flv`, 'video/x-flv');
+      if (resp.converted) setStatus('已转封装为 MP4 并触发下载');
+      else if (resp.note) setStatus(resp.note);
+      else setStatus('已触发下载');
     } catch (e) { setStatus('FLV 合并失败: ' + e.message); }
   });
 

@@ -69,7 +69,9 @@ function getFFmpeg() {
     // 必须通过 setLogger() 注册才能真正捕获 fferr/ffout，否则失败时拿不到任何 ffmpeg 日志。
     inst.setLogger(({ message }) => {
       _logBuf.push(message);
-      if (_logBuf.length > 80) _logBuf.shift();
+      // 缓冲放大到 400 行：输入流探测信息在日志头部，5 分钟的合成会产生大量进度行，
+      // 80 行会把关键的 "Stream mapping / Duration / codec" 头部信息冲掉，诊断丢包问题时必须保留
+      if (_logBuf.length > 400) _logBuf.shift();
     });
     console.log('[ffmpeg] createFFmpeg 已构造，开始 load()…');
     await inst.load();
@@ -131,11 +133,22 @@ async function muxOnce(ff, videoBuf, audioBuf) {
   console.log('[ffmpeg] 探测视频容器 =', vExt, 'video', mb(videoBuf.length), 'audio', mb(audioBuf.length));
   await ff.FS('writeFile', vName, videoBuf);
   await ff.FS('writeFile', aName, audioBuf);
-  console.log('[ffmpeg] 已写入 MEMFS，开始合成（-vcodec copy -acodec copy，不加 +faststart 以兼容 B站 fMP4 输入）…');
+  console.log('[ffmpeg] 已写入 MEMFS，开始合成（-c copy + genpts，不加 +faststart 以兼容 B站 fMP4 输入）…');
   try {
-    // 对齐参考实现 bilibili-helper：先视频后音频，-vcodec/-acodec copy（等价 -c copy），
+    // 对齐参考实现 bilibili-helper：先视频后音频，-vcodec/-acodec copy（等价 -c copy）。
+    // 关键修复 —— 加 -fflags +genpts：B站 fMP4 流的时间戳存在非单调 DTS（日志中的
+    // "Non-monotonous DTS in output stream" 警告），mp4 封装器遇到非单调 DTS 会直接丢弃
+    // 数据包，导致 -c copy 输出只剩输入的 1/6 左右（167MB 输入只出 24MB）。
+    // genpts 让 ffmpeg 重新生成 PTS，规避封装器丢包。
+    // -map 显式选取「输入0的视频 + 输入1的音频」，避免误选多余流。
     // 不加 -movflags +faststart（+faststart 在「从 fMP4 复制」时可能失败导致无输出并静默返回）。
-    await ff.run('-i', vName, '-i', aName, '-vcodec', 'copy', '-acodec', 'copy', '-y', 'out.mp4');
+    await ff.run(
+      '-fflags', '+genpts', '-i', vName,
+      '-fflags', '+genpts', '-i', aName,
+      '-map', '0:v:0', '-map', '1:a:0',
+      '-vcodec', 'copy', '-acodec', 'copy',
+      '-y', 'out.mp4'
+    );
   } catch (e) {
     const tail = _logBuf.slice(-20).join('\n');
     throw new Error('ffmpeg 执行异常: ' + (e && e.message || e) + (tail ? ('\n' + tail) : ''));
@@ -149,8 +162,19 @@ async function muxOnce(ff, videoBuf, audioBuf) {
     try { dir = 'MEMFS 根目录: ' + ff.FS('readdir', '/').join(', '); } catch (e) {}
     throw new Error('ffmpeg 未生成 out.mp4（合成失败）。' + dir + '\nffmpeg 日志：\n' + (tail || '(无日志，请确认核心已正常加载)'));
   }
+  // 体积合理性检查：-c copy 不重编码，输出应≈输入视频+音频（仅容器开销差异）。
+  // 若输出明显偏小（< 输入的 90%），说明 ffmpeg 丢了大量数据包（如非单调 DTS 丢包），
+  // 此时产出的文件是残缺的，必须报失败并回显日志，而不是让用户拿到坏文件。
+  const inputTotal = videoBuf.length + audioBuf.length;
+  if (size < inputTotal * 0.9) {
+    const tail = _logBuf.slice(-30).join('\n');
+    throw new Error(
+      '合成输出体积异常：输入 ' + mb(inputTotal) + '，输出仅 ' + mb(size) +
+      '（不足 90%），疑似 ffmpeg 丢包（时间戳问题）。请查看日志。\nffmpeg 日志尾：\n' + tail
+    );
+  }
   const data = ff.FS('readFile', 'out.mp4'); // Uint8Array（可能是大池上的视图）
-  console.log('[ffmpeg] 合成完成，out.mp4 =', mb(data.length));
+  console.log('[ffmpeg] 合成完成，out.mp4 =', mb(data.length), '（输入合计', mb(inputTotal), '）');
   // 释放 MEMFS，避免多次合成后内存堆积
   try { ff.FS('unlink', vName); ff.FS('unlink', aName); ff.FS('unlink', 'out.mp4'); } catch (e) {}
   // 拷贝成精确长度的 Uint8Array 再返回（readFile 返回的视图可能基于更大的池）
@@ -191,6 +215,42 @@ function concatChunks(chunks) {
   return out;
 }
 
+// FLV → MP4 转封装（-c copy 不重编码，秒级完成）。
+// FLV 容器兼容性一般（部分播放器 / 设备 / 剪辑软件不支持），转成 MP4 提升兼容性。
+// 复用 mux 的串行锁与实例生命周期管理（共享同一个 ffmpeg 实例，避免并发 run）。
+// 成功返回转封装后的 MP4 字节；失败（抛错）由调用方回退下载原 FLV。
+async function remuxFlv(flvBytes) {
+  const prev = _muxLock;
+  let release;
+  _muxLock = new Promise((r) => { release = r; });
+  await prev;
+  const ff = await getFFmpeg();
+  try {
+    await ff.FS('writeFile', 'in.flv', flvBytes);
+    console.log('[ffmpeg] FLV 转封装开始，输入', mb(flvBytes.length));
+    // -fflags +genpts 规避 FLV 非单调时间戳导致的丢包；-c copy 仅换容器不重编码
+    await ff.run('-fflags', '+genpts', '-i', 'in.flv', '-c', 'copy', '-y', 'out.mp4');
+    let size = 0;
+    try { size = ff.FS('stat', 'out.mp4').size; } catch (e) { size = 0; }
+    if (!size) {
+      try { ff.FS('unlink', 'in.flv'); } catch (_) {}
+      throw new Error('ffmpeg 未生成 out.mp4');
+    }
+    const data = ff.FS('readFile', 'out.mp4');
+    console.log('[ffmpeg] FLV 转封装完成，out.mp4 =', mb(data.length));
+    try { ff.FS('unlink', 'in.flv'); ff.FS('unlink', 'out.mp4'); } catch (_) {}
+    return new Uint8Array(data);
+  } catch (e) {
+    // 失败时销毁实例复位（running 可能卡住），下次重建
+    try { ff.exit(); } catch (_) {}
+    _ff = null;
+    _loading = null;
+    throw e;
+  } finally {
+    release();
+  }
+}
+
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!msg || !msg.type) return;
 
@@ -216,20 +276,41 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return false;
   }
 
-  // save go：拼装并触发下载（同步完成，直接回传结果）
+  // save go：拼装并触发下载。
+  // FLV 容器兼容性一般：检测到 FLV（mime 或文件名）时先用 ffmpeg 转封装成 MP4（-c copy 秒级），
+  // 转封装失败则回退下载原 FLV。非 FLV 直接下载。
   if (msg.type === 'bili-save-go') {
     const s = _saveSessions.get(msg.requestId);
     if (!s) { sendResponse({ ok: false, error: 'save 会话不存在（分块可能丢失）' }); return false; }
     _saveSessions.delete(msg.requestId);
-    try {
-      const bytes = concatChunks(s.chunks);
-      saveBlob(bytes, s.filename, s.mime);
-      console.log('[ffmpeg] save 完成', mb(bytes.length), s.filename);
-      sendResponse({ ok: true });
-    } catch (e) {
-      sendResponse({ ok: false, error: String((e && e.message) || e) });
-    }
-    return false;
+    (async () => {
+      try {
+        const bytes = concatChunks(s.chunks);
+        const isFlv = s.mime === 'video/x-flv' || /\.flv$/i.test(s.filename || '');
+        if (isFlv) {
+          try {
+            const mp4 = await remuxFlv(bytes);
+            const mp4Name = (s.filename || 'download').replace(/\.flv$/i, '.mp4');
+            saveBlob(mp4, mp4Name, 'video/mp4');
+            console.log('[ffmpeg] save 完成（FLV→MP4）', mb(mp4.length), mp4Name);
+            sendResponse({ ok: true, converted: true });
+          } catch (e) {
+            // 转封装失败：回退下载原 FLV，保证用户至少拿到文件
+            console.warn('[ffmpeg] FLV 转封装失败，回退下载原 FLV：', e && e.message);
+            saveBlob(bytes, s.filename, s.mime);
+            console.log('[ffmpeg] save 完成（原 FLV）', mb(bytes.length), s.filename);
+            sendResponse({ ok: true, converted: false, note: 'FLV 转 MP4 失败，已下载原 FLV: ' + (e && e.message || e) });
+          }
+        } else {
+          saveBlob(bytes, s.filename, s.mime);
+          console.log('[ffmpeg] save 完成', mb(bytes.length), s.filename);
+          sendResponse({ ok: true, converted: false });
+        }
+      } catch (e) {
+        sendResponse({ ok: false, error: String((e && e.message) || e) });
+      }
+    })();
+    return true; // 异步 sendResponse（转封装是异步的）
   }
 
   // ---- bili-mux 协议：DASH 音视频流合成 MP4 ----
