@@ -154,7 +154,10 @@ function downloadViaExtension(url, filename) {
   });
 }
 
-// 在 content script 内触发 Blob 落地（用于 FLV 合并文件）
+// 在 content script 内触发 Blob 落地。
+// 注意：B站页面沙箱未设 allow-downloads，程序化 <a download>（脱离用户手势窗口时）
+// 会被拦截（"Download is disallowed... sandboxed"）。大文件/耗时任务请改用
+// saveViaOffscreen 走 offscreen 文档下载；此函数仅保留给紧贴用户手势的小文件场景。
 function downloadBlob(blob, filename) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -166,18 +169,45 @@ function downloadBlob(blob, filename) {
   setTimeout(() => URL.revokeObjectURL(url), 60 * 1000);
 }
 
-// 单独保存 DASH 音视频流（.m4s）：走 content 内 fetch + Blob 落地，
-// 复用与 fetchStream / fetchAndConcat 完全一致的请求参数（omit credentials + 保留 Referer）。
+// 经 offscreen 文档落地文件：content 的 <a download> 被页面沙箱拦截
+// （allow-downloads 未设置，合成/合并耗时数分钟早已脱离用户手势窗口），
+// 而 offscreen.html 是普通扩展页面（chrome-extension://）不受此限制。
+// 协议：bili-save-init（确保 offscreen 就绪）→ bili-save-chunk × N → bili-save-go。
+// 每块 16MB 原始数据（base64 后约 21.3MB，低于 64MiB 单消息上限），逐块 await 形成流控。
+async function saveViaOffscreen(bytes, filename, mime) {
+  const requestId = 'save_' + Date.now() + '_' + Math.random().toString(36).slice(2);
+  const sendMsg = (payload) => new Promise((res, rej) => {
+    chrome.runtime.sendMessage(payload, () => {
+      chrome.runtime.lastError ? rej(new Error(chrome.runtime.lastError.message)) : res();
+    });
+  });
+  await sendMsg({ type: 'bili-save-init', requestId, filename, mime });
+  const CHUNK = 16 * 1048576;
+  const n = Math.max(1, Math.ceil(bytes.length / CHUNK));
+  for (let i = 0; i < n; i++) {
+    const piece = bytes.subarray(i * CHUNK, (i + 1) * CHUNK);
+    let bin = '';
+    for (let j = 0; j < piece.length; j += 0x8000) {
+      bin += String.fromCharCode.apply(null, piece.subarray(j, j + 0x8000));
+    }
+    await sendMsg({ type: 'bili-save-chunk', requestId, index: i, b64: btoa(bin) });
+  }
+  await sendMsg({ type: 'bili-save-go', requestId });
+}
+
+// 单独保存 DASH 音视频流（.m4s）：走 content 内 fetch（带页面 Referer 通过 CDN 鉴权），
+// 落地经 saveViaOffscreen 交给 offscreen 文档——fetch 是异步的，等拉完早已脱离用户
+// 手势窗口，content 的 <a download> 会被页面沙箱拦截（allow-downloads 未设置）。
 // 关键点：chrome.downloads.download 发起的下载没有“来源页面”，不会带 Referer，
 // 而 B站媒体 CDN 直链（bilivideo.com / *.edge.mountaintoys.cn 等边缘节点）会校验 Referer，
 // 缺失则返回 403 的 HTML 错误页 —— 于是浏览器把下载命名成 xxx.html 并报“已被禁止”。
 // 在 content script 里 fetch 时，浏览器会自动带上当前页 Referer（no-referrer-when-downgrade），
-// 走通鉴权，再拿 Blob 用 downloadBlob 落地，文件名即我们指定的 .m4s。
+// 走通鉴权，再把字节交给 offscreen 落地，文件名即我们指定的 .m4s。
 async function downloadStream(url, filename) {
   const r = await fetch(url, { credentials: 'omit', referrerPolicy: 'no-referrer-when-downgrade' });
   if (!r.ok) throw new Error('流拉取失败: HTTP ' + r.status);
-  const blob = await r.blob();
-  downloadBlob(blob, filename);
+  const bytes = new Uint8Array(await r.arrayBuffer());
+  await saveViaOffscreen(bytes, filename, 'video/mp4');
   return { ok: true };
 }
 
@@ -215,7 +245,8 @@ async function fetchAndConcat(urls, onRatio) {
   const out = new Uint8Array(total);
   let off = 0;
   for (const c of chunks) { out.set(c, off); off += c.length; }
-  return new Blob([out], { type: 'video/x-flv' });
+  // 返回 Uint8Array（而非 Blob）：落地统一走 saveViaOffscreen，由其分块传给 offscreen
+  return out;
 }
 
 // 单个直链的流式拉取（带进度），用于「合成 MP4」时拉取视频/音频流。
@@ -357,7 +388,7 @@ function buildPanel(host) {
         <button class="act" id="btn-audio">下载音频流</button>
       </div>
       <div class="row">
-        <button class="act primary" id="btn-mux">合成 MP4（浏览器内）</button>
+        <button class="act primary" id="btn-mux">合成 MP4（高码率）</button>
       </div>
       <div class="flvbox" id="muxbox">
         <div class="pbar"><span class="pl">合成 MP4</span><div class="track"><div class="fill" id="pb-m"></div></div><span class="pv" id="pct-m">0%</span></div>
@@ -667,27 +698,12 @@ function observeToolbar(togglePanel) {
     }
   });
 
-  // 浏览器内合成 MP4：按顺序拉取视频流 → 音频流（不并行），再交给 offscreen 里的
-  // ffmpeg.wasm 封装成单个 MP4；失败回退到分离下载。
+  // 浏览器内合成 MP4：按顺序拉取视频流 → 音频流（不并行），再分块 base64 传给
+  // offscreen 里的 ffmpeg.wasm 封装成单个 MP4；成品由 offscreen 直接下载。
   //
   // 注意：chrome.runtime.sendMessage 只支持 JSON 序列化，ArrayBuffer 会被序列化成 {}
   // （对端 new Uint8Array({}) 得到 0 字节，ffmpeg 报 "moov atom not found"）。
   // 因此所有跨进程二进制载荷一律 base64 编码传输。
-  function bufToB64(buf) {
-    const bytes = new Uint8Array(buf);
-    let bin = '';
-    const CHUNK = 0x8000; // 分块避免 String.fromCharCode 参数过多爆栈
-    for (let i = 0; i < bytes.length; i += CHUNK) {
-      bin += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
-    }
-    return btoa(bin);
-  }
-  function b64ToU8(b64) {
-    const bin = atob(b64);
-    const bytes = new Uint8Array(bin.length);
-    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-    return bytes;
-  }
   // 字节数转 MB（保留两位小数），用于日志展示流体积
   function mb(bytes) { return (bytes / 1048576).toFixed(2) + ' MB'; }
   let _muxResolver = null;
@@ -718,25 +734,70 @@ function observeToolbar(togglePanel) {
       $('muxbox').style.display = 'none';
       return;
     }
-    setStatus('浏览器内合成中 0%');
-    setBar('m', 0); // 交给 offscreen 的合成进度（0→1）接管
-    console.log('[bili-mux] mux: 发送 bili-mux 到 background, video', mb(vBuf.byteLength), 'audio', mb(aBuf.byteLength));
-    // base64 编码后发送（消息通道不支持 ArrayBuffer）；带 lastError 检查避免静默丢消息
-    const payload = { type: 'bili-mux', videoB64: bufToB64(vBuf), audioB64: bufToB64(aBuf) };
-    vBuf = aBuf = null; // 尽早释放原始 buffer，base64 期间内存占用翻倍
-    chrome.runtime.sendMessage(payload, () => {
-      if (chrome.runtime.lastError) console.error('[bili-mux] mux: 发送 bili-mux 失败', chrome.runtime.lastError.message);
+    setStatus('准备传输…');
+    setBar('m', 0);
+    console.log('[bili-mux] mux: 分块传输 video', mb(vBuf.byteLength), 'audio', mb(aBuf.byteLength));
+
+    // 方案二（分块消息）：offscreen 无法直接拉流——CDN 按 Sec-Fetch-Site 头拒绝
+    // chrome-extension:// 发起方（该头由浏览器按发起源自动设置，属 forbidden header，
+    // Referer/Origin/Range 各种组合均无法绕过，已用探测按钮实测验证），
+    // 故由 content 拉流后分块 base64 传给 offscreen 合成。
+    // 单条 chrome.runtime 消息上限 64MiB，base64 膨胀 4/3，故每块取 16MB 原始数据
+    // （编码后约 21.3MB），留足余量。成品由 offscreen 直接 chrome.downloads 下载，
+    // 不回传 content，彻底避开回程 64MiB 限制。
+    const RAW_CHUNK = 16 * 1048576;
+    const requestId = 'mux_' + Date.now() + '_' + Math.random().toString(36).slice(2);
+    // 带回调的 sendMessage 封装：lastError 转 reject，便于 await 做流控
+    const sendMsg = (payload) => new Promise((res, rej) => {
+      chrome.runtime.sendMessage(payload, () => {
+        chrome.runtime.lastError ? rej(new Error(chrome.runtime.lastError.message)) : res();
+      });
     });
+    const sendChunks = async (stream, buf, label) => {
+      const bytes = new Uint8Array(buf);
+      const n = Math.max(1, Math.ceil(bytes.length / RAW_CHUNK));
+      for (let i = 0; i < n; i++) {
+        const piece = bytes.subarray(i * RAW_CHUNK, (i + 1) * RAW_CHUNK);
+        let bin = '';
+        for (let j = 0; j < piece.length; j += 0x8000) {
+          bin += String.fromCharCode.apply(null, piece.subarray(j, j + 0x8000));
+        }
+        await sendMsg({ type: 'bili-mux-chunk', requestId, stream, index: i, b64: btoa(bin) });
+        setStatus(`传输${label} ${i + 1}/${n}`);
+        setBar('m', (i + 1) / n);
+      }
+    };
+    try {
+      const filename = `${sanitize(viewData.title)}_${elQn.value}.mp4`;
+      // init：background 记录 tabId 映射并确保 offscreen 就绪后才回复，
+      // 必须 await，否则分块可能先于 offscreen 监听器注册而丢失
+      await sendMsg({ type: 'bili-mux-init', requestId, filename });
+      await sendChunks('video', vBuf, '视频流');
+      vBuf = null; // 尽早释放，降低内存峰值
+      await sendChunks('audio', aBuf, '音频流');
+      aBuf = null;
+      // go：触发拼装 + 合成 + offscreen 直接下载；不 await（其 sendResponse 要等合成结束），
+      // 结果经 bili-mux-result 异步消息回传（下方 runtime 监听处理）
+      sendMsg({ type: 'bili-mux-go', requestId }).catch((e) => {
+        console.error('[bili-mux] mux: go 失败', e && e.message);
+      });
+    } catch (e) {
+      setStatus('传输失败: ' + (e && e.message) + '（可改用 FLV 合并或分离下载）');
+      $('muxbox').style.display = 'none';
+      return;
+    }
+    setStatus('浏览器内合成中…');
+    setBar('m', 0); // 交给 offscreen 的合成进度（0→1）接管
     // 等待 background 定向转发的合成结果（下方 runtime 监听 resolve），期间按钮保持置灰；
-    // 加 180s 超时保护，避免极端情况下按钮卡死
+    // 大文件合成耗时久，超时放宽到 600s（与 background 侧一致）
     await new Promise((res) => {
       let done = false;
       const finish = () => { if (done) return; done = true; _muxResolver = null; res(); };
       _muxResolver = finish;
       setTimeout(() => {
-        if (!done) { console.error('[bili-mux] mux: 等待合成结果超时(180s)'); setStatus('合成等待超时，仍在后台进行可稍候，或点按钮重试 / 改用分离下载'); }
+        if (!done) { console.error('[bili-mux] mux: 等待合成结果超时(600s)'); setStatus('合成等待超时，仍在后台进行可稍候，或点按钮重试 / 改用分离下载'); }
         finish();
-      }, 180000);
+      }, 600000);
     });
   });
 
@@ -747,9 +808,9 @@ function observeToolbar(togglePanel) {
     setBar('f', 0);
     try {
       const urls = flvData.durl.map(d => d.url);
-      const blob = await fetchAndConcat(urls, (ratio) => setBar('f', ratio));
+      const bytes = await fetchAndConcat(urls, (ratio) => setBar('f', ratio));
       setBar('f', 1);
-      downloadBlob(blob, `${sanitize(viewData.title)}.flv`);
+      await saveViaOffscreen(bytes, `${sanitize(viewData.title)}.flv`, 'video/x-flv');
       setStatus('FLV 已合并并触发下载');
     } catch (e) { setStatus('FLV 合并失败: ' + e.message); }
   });
@@ -768,8 +829,8 @@ function observeToolbar(togglePanel) {
       try {
         const data = await fetchPlayurl(bvid, Number(cid), 0, 80);
         if (data.durl && data.durl.length) {
-          const blob = await fetchAndConcat(data.durl.map(d => d.url));
-          downloadBlob(blob, `${sanitize(viewData.title)}_${sanitize(title)}.flv`);
+          const bytes = await fetchAndConcat(data.durl.map(d => d.url));
+          await saveViaOffscreen(bytes, `${sanitize(viewData.title)}_${sanitize(title)}.flv`, 'video/x-flv');
         }
       } catch (e) { setStatus(`第 ${i + 1} 个失败: ${e.message}`); }
       setStatus(`批量下载 ${i + 1}/${boxes.length}…`);
@@ -801,11 +862,10 @@ function observeToolbar(togglePanel) {
     }
     if (msg.type === 'bili-mux-result') {
       if (_muxResolver) { const r = _muxResolver; _muxResolver = null; r(); } // 释放 guarded 锁
-      if (msg.ok && msg.mp4B64) {
-        const mp4 = b64ToU8(msg.mp4B64);
-        console.log('[bili-mux] mux: 收到合成结果 ok, mp4 字节 =', mp4.length);
-        const blob = new Blob([mp4], { type: 'video/mp4' });
-        downloadBlob(blob, `${sanitize(viewData.title)}_${elQn.value}.mp4`);
+      if (msg.ok) {
+        // 下载已由 SW 的 chrome.downloads 完成（offscreen 建 blob URL 交给 SW 落地）；
+        // content 的 <a download> 因合成耗时脱离用户手势窗口、被页面沙箱拦截，故不走此路。
+        console.log('[bili-mux] mux: 合成成功，SW 已发起下载');
         setBar('m', 1);
         setStatus('MP4 已合成并下载');
       } else {

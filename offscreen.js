@@ -4,9 +4,15 @@
 // 而扩展页面（Offscreen Document）可以，且单线程 core 不依赖 SharedArrayBuffer，
 // 不需要 B站页面提供 COOP/COEP 响应头。
 //
-// 消息协议（均由 background 中转；二进制载荷一律 base64，消息通道不支持 ArrayBuffer）：
-//   入站 bili-mux        { type, replyTo, videoB64:string, audioB64:string }
-//   出站 bili-mux-result { type, replyTo, ok, mp4B64?:string, error? }
+// 为什么不在这里拉流：CDN 按 Sec-Fetch-Site 头拒绝 chrome-extension:// 发起方
+// （该头由浏览器按发起源自动设置，属 forbidden header 无法覆盖，已实测验证），
+// 故音视频流由 content script 拉取后分块 base64 传入。
+//
+// 消息协议（方案二·分块消息；二进制载荷一律 base64，消息通道不支持 ArrayBuffer）：
+//   入站 bili-mux-init     { type, requestId, filename }        重置会话缓冲
+//   入站 bili-mux-chunk    { type, requestId, stream, index, b64 } 累积数据块
+//   入站 bili-mux-go       { type, requestId }                  拼装+合成+直接下载
+//   出站 bili-mux-result   { type, replyTo, ok, error? }        （成品不回传，offscreen 直接下载）
 //   出站 bili-mux-progress { type, replyTo, ratio:0..1 }
 
 let _ff = null;
@@ -15,20 +21,12 @@ let _replyTo = null;
 let _logBuf = [];   // 缓存 ffmpeg 最近日志，用于失败时回显诊断
 
 // chrome.runtime.sendMessage 只支持 JSON 序列化，ArrayBuffer 会被序列化成 {}，
-// 因此跨进程二进制载荷一律 base64；这里负责解码入站、编码出站。
+// 因此跨进程二进制载荷一律 base64；这里负责解码入站分块。
 function b64ToU8(b64) {
   const bin = atob(b64);
   const bytes = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
   return bytes;
-}
-function u8ToB64(bytes) {
-  let bin = '';
-  const CHUNK = 0x8000;
-  for (let i = 0; i < bytes.length; i += CHUNK) {
-    bin += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
-  }
-  return btoa(bin);
 }
 // 字节数转 MB（保留两位小数），用于日志展示流体积
 function mb(bytes) { return (bytes / 1048576).toFixed(2) + ' MB'; }
@@ -92,7 +90,7 @@ function probeVideoExt(buf) {
 }
 
 function send(msg) {
-  console.log('[ffmpeg] 发送', msg.type, 'ok =', msg.ok, 'mp4B64 =', msg.mp4B64 && msg.mp4B64.length, 'err =', msg.error && String(msg.error).slice(0, 80));
+  console.log('[ffmpeg] 发送', msg.type, 'ok =', msg.ok, 'err =', msg.error && String(msg.error).slice(0, 80));
   chrome.runtime.sendMessage(msg).catch((e) => console.error('[ffmpeg] sendMessage 失败', e && e.message));
 }
 
@@ -159,22 +157,157 @@ async function muxOnce(ff, videoBuf, audioBuf) {
   return new Uint8Array(data);
 }
 
-chrome.runtime.onMessage.addListener((msg) => {
-  if (msg && msg.type === 'bili-mux') {
-    // base64 长度 → 实际字节数 ≈ len * 3 / 4
-    const b64Mb = (s) => s ? mb(Math.floor(s.length * 3 / 4)) : '0 MB';
-    console.log('[ffmpeg] 收到 bili-mux, replyTo =', msg.replyTo,
-      'video', b64Mb(msg.videoB64), 'audio', b64Mb(msg.audioB64));
-    _replyTo = msg.replyTo;
-    mux(b64ToU8(msg.videoB64 || ''), b64ToU8(msg.audioB64 || ''))
-      .then((mp4) => send({ type: 'bili-mux-result', replyTo: msg.replyTo, ok: true, mp4B64: u8ToB64(mp4) }))
+// 方案二（分块消息）会话状态：requestId -> { filename, video:Uint8Array[], audio:Uint8Array[] }
+// content 拉流后分块 base64 传入，go 时拼装成完整 Uint8Array 交给 mux。
+const _sessions = new Map();
+
+// bili-save 会话状态：requestId -> { filename, mime, chunks:Uint8Array[] }
+// FLV 合并 / 分离流保存走此通道：content 拼好字节后分块传入，go 时拼装并触发下载。
+// 与 _sessions 分开，避免与合成会话互相干扰。
+const _saveSessions = new Map();
+
+// 在 offscreen 文档内触发 Blob 落地。offscreen.html 是普通扩展页面（chrome-extension://），
+// 不受 B站页面沙箱的 allow-downloads 限制，程序化 <a download> 可正常执行。
+function saveBlob(bytes, filename, mime) {
+  const blob = new Blob([bytes], { type: mime || 'application/octet-stream' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename || 'download';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  // 延迟 revoke：给浏览器足够时间启动下载（立即 revoke 可能导致下载失败）
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
+
+// 把分块数组按序拼装成单个 Uint8Array
+function concatChunks(chunks) {
+  let total = 0;
+  for (const c of chunks) total += c.length;
+  const out = new Uint8Array(total);
+  let off = 0;
+  for (const c of chunks) { out.set(c, off); off += c.length; }
+  return out;
+}
+
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (!msg || !msg.type) return;
+
+  // ---- bili-save 协议：FLV 合并 / 分离流保存（content 拼好字节分块传入，go 时落地）----
+
+  // save init：建立会话缓冲
+  if (msg.type === 'bili-save-init') {
+    _saveSessions.set(msg.requestId, { filename: msg.filename || 'download', mime: msg.mime, chunks: [] });
+    sendResponse({ ok: true });
+    return false;
+  }
+
+  // save chunk：解码 base64 后累积（立即 sendResponse 确认，形成流控）
+  if (msg.type === 'bili-save-chunk') {
+    const s = _saveSessions.get(msg.requestId);
+    if (!s) { sendResponse({ ok: false, error: 'save 会话不存在（init 未到达或已清理）' }); return false; }
+    try {
+      s.chunks.push(b64ToU8(msg.b64 || ''));
+      sendResponse({ ok: true });
+    } catch (e) {
+      sendResponse({ ok: false, error: String((e && e.message) || e) });
+    }
+    return false;
+  }
+
+  // save go：拼装并触发下载（同步完成，直接回传结果）
+  if (msg.type === 'bili-save-go') {
+    const s = _saveSessions.get(msg.requestId);
+    if (!s) { sendResponse({ ok: false, error: 'save 会话不存在（分块可能丢失）' }); return false; }
+    _saveSessions.delete(msg.requestId);
+    try {
+      const bytes = concatChunks(s.chunks);
+      saveBlob(bytes, s.filename, s.mime);
+      console.log('[ffmpeg] save 完成', mb(bytes.length), s.filename);
+      sendResponse({ ok: true });
+    } catch (e) {
+      sendResponse({ ok: false, error: String((e && e.message) || e) });
+    }
+    return false;
+  }
+
+  // ---- bili-mux 协议：DASH 音视频流合成 MP4 ----
+
+  // init：重置会话缓冲（content 拉流完成后、发分块前调用）
+  if (msg.type === 'bili-mux-init') {
+    _sessions.set(msg.requestId, { filename: msg.filename || 'mux.mp4', video: [], audio: [] });
+    console.log('[ffmpeg] 收到 init, requestId =', msg.requestId, 'filename =', msg.filename);
+    sendResponse({ ok: true });
+    return false;
+  }
+
+  // chunk：解码 base64 后按流类型累积（立即 sendResponse 确认，形成流控）
+  if (msg.type === 'bili-mux-chunk') {
+    const s = _sessions.get(msg.requestId);
+    if (!s) { sendResponse({ ok: false, error: '会话不存在（init 未到达或已清理）' }); return false; }
+    try {
+      const bytes = b64ToU8(msg.b64 || '');
+      (msg.stream === 'audio' ? s.audio : s.video).push(bytes);
+      sendResponse({ ok: true });
+    } catch (e) {
+      sendResponse({ ok: false, error: String((e && e.message) || e) });
+    }
+    return false;
+  }
+
+  // go：拼装 + ffmpeg 合成 + offscreen 文档 <a download> 落地（成品不回传 content）
+  if (msg.type === 'bili-mux-go') {
+    const requestId = msg.requestId;
+    const s = _sessions.get(requestId);
+    if (!s) { sendResponse({ ok: false, error: '会话不存在（分块可能丢失）' }); return false; }
+    // 立即应答确认收到（同步 sendResponse），关闭本条消息端口；
+    // 真正的合成结果经 bili-mux-result 广播回传，background 据此 resolve。
+    sendResponse({ ok: true });
+    _sessions.delete(requestId); // 尽早释放分块引用
+
+    const videoBuf = concatChunks(s.video);
+    const audioBuf = concatChunks(s.audio);
+    s.video = s.audio = null;
+    console.log('[ffmpeg] 收到 go, requestId =', requestId, 'video', mb(videoBuf.length), 'audio', mb(audioBuf.length));
+
+    _replyTo = requestId;
+    mux(videoBuf, audioBuf)
+      .then((mp4) => {
+        // 下载路径选择（前两条已实测不可行）：
+        //   · content 的 <a download>：合成耗时数分钟，脱离用户手势窗口，
+        //     被 B站页面沙箱拦截（"allow-downloads is not set"）；
+        //   · chrome.downloads.download(blobUrl)：blob: URL 作用域限于创建它的
+        //     document，downloads API 跨进程无法访问，官方明确不支持；
+        //   · ✅ offscreen 文档自己 <a download> 点击：offscreen.html 是普通扩展
+        //     页面（chrome-extension://），非沙箱，无 allow-downloads 限制。
+        //     这正是 Chrome 为 offscreen 设计 BLOBS reason 的用途。
+        const blob = new Blob([mp4], { type: 'video/mp4' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = s.filename || 'mux.mp4';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        // 延迟 revoke：给浏览器足够时间启动下载（立即 revoke 可能导致下载失败）
+        setTimeout(() => URL.revokeObjectURL(url), 60000);
+        console.log('[ffmpeg] 合成完成', mb(mp4.length), '，offscreen 已触发下载:', s.filename);
+        send({ type: 'bili-mux-result', replyTo: requestId, ok: true });
+      })
       .catch((e) => {
         const errMsg = String((e && e.message) || e);
         const tail = _logBuf.slice(-15).join('\n');
         console.error('[ffmpeg] 合成失败:', errMsg, '\n--- ffmpeg 日志尾 ---\n' + tail);
-        send({ type: 'bili-mux-result', replyTo: msg.replyTo, ok: false, error: errMsg + (tail ? ('\n' + tail) : '') });
+        send({ type: 'bili-mux-result', replyTo: requestId, ok: false, error: errMsg + (tail ? ('\n' + tail) : '') });
       })
       .finally(() => { _replyTo = null; });
+
+    // 合成是异步长任务：结果经 bili-mux-result 广播回传（background 据此 resolve）。
+    // 这里不 return true、不 sendResponse：本条 go 消息无需应答，立即关闭端口即可。
+    // （若 return true 却不 sendResponse，端口会在监听器返回后关闭，导致 background 的
+    //  sendMessage Promise 以 "message port closed" 拒绝，误判为失败。）
+    return false;
   }
 });
 
