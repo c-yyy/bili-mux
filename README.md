@@ -8,6 +8,17 @@
 
 > **仅供个人学习留存使用，请勿用于批量搬运或二次分发。**
 
+## 快速安装
+
+**推荐直接下载已打包的 CRX 扩展包**：[Bili-Mux-v1.1.0.crx](./Bili-Mux-v1.1.0.crx)
+
+1. 下载上方的 `.crx` 文件。
+2. 打开 Chrome，进入 `chrome://extensions/`。
+3. 开启右上角「开发者模式」。
+4. 将 `.crx` 文件拖入浏览器窗口即可安装。
+
+> 如需自行打包，可使用本仓库的 `Bili-Mux-v1.1.0.pem` 密钥运行 `chrome --pack-extension=项目目录 --pack-extension-key=Bili-Mux-v1.1.0.pem`。
+
 ## 功能一览
 
 | 功能 | 说明 |
