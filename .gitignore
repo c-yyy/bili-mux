@@ -8,3 +8,6 @@ _metadata/
 node_modules/
 .tmp-*/
 *.bak
+
+# macOS
+.DS_Store
