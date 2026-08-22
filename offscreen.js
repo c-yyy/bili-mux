@@ -56,8 +56,11 @@ function getFFmpeg() {
       mainName: 'main',
       log: true,
       progress: (ratio) => {
-        if (_replyTo != null) {
-          chrome.runtime.sendMessage({ type: 'bili-mux-progress', replyTo: _replyTo, ratio }).catch(() => {});
+        // 0.11 包装层传入的是 { ratio, time } 对象（非裸数字），需取出 .ratio；
+        // 某些场景 ratio 可能为 NaN（Duration 尚未解析时 a/P），content 侧再兜底。
+        const r = (ratio && typeof ratio === 'object') ? ratio.ratio : ratio;
+        if (_replyTo != null && typeof r === 'number' && !isNaN(r)) {
+          chrome.runtime.sendMessage({ type: 'bili-mux-progress', replyTo: _replyTo, ratio: r }).catch(() => {});
         }
       }
     });
@@ -91,18 +94,32 @@ function send(msg) {
   chrome.runtime.sendMessage(msg).catch((e) => console.error('[ffmpeg] sendMessage 失败', e && e.message));
 }
 
+// 串行化所有 mux 调用：防止并发合成在共享实例上同时 run（会导致
+// "ffmpeg.wasm can only run one command at a time"）
+let _muxLock = Promise.resolve();
+
 async function mux(videoBuf, audioBuf) {  // 入参为 Uint8Array（已由监听器解码）
+  // 串行化：等待上一次 mux 结束后再开始
+  const prev = _muxLock;
+  let release;
+  _muxLock = new Promise((r) => { release = r; });
+  await prev;
+
   const ff = await getFFmpeg();
   try {
     return await muxOnce(ff, videoBuf, audioBuf);
-  } finally {
-    // 每次合成后销毁实例，下次合成重新 load：
-    // 0.11 包装层靠 core 打印 FFMPEG_END 来复位 running 标志，core-st 这个复位不可靠，
-    // 残留 running=true 会导致第二次 run 直接抛 "can only run one command at a time"。
-    // 重建实例（wasm 有缓存，reload 很快）是最稳妥的规避方式，也顺带清空 MEMFS。
-    try { ff.exit(); } catch (e) {}
+    // 成功时保留实例复用：run() 成功 → FFMPEG_END 已收到 → running 已复位为 false，
+    // MEMFS 已由 muxOnce 内 unlink 清理。实例可直接用于下次合成。
+    // 不调 exit()：销毁后重建会触发 createFFmpegCore 的内部缓存问题，
+    // 导致新实例的 running 标志仍为 true → 第二次合成报 "can only run one command at a time"。
+  } catch (e) {
+    // 失败时才销毁实例：running 可能卡在 true，重建是唯一可靠的复位方式
+    try { ff.exit(); } catch (_) {}
     _ff = null;
     _loading = null;
+    throw e;
+  } finally {
+    release();
   }
 }
 

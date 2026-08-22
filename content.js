@@ -530,6 +530,7 @@ function observeToolbar(togglePanel) {
   function setBar(which, ratio) {
     const fill = $('pb-' + which), pct = $('pct-' + which);
     if (!fill) return;
+    if (typeof ratio !== 'number' || isNaN(ratio)) ratio = 0; // 兜底：ffmpeg 可能传 NaN/对象
     if (ratio < 0) { fill.style.width = '100%'; fill.style.opacity = '.4'; pct.textContent = '…'; }
     else {
       ratio = Math.min(1, Math.max(0, ratio)); // 钳制：部分分段无 Content-Length 时比例可能越界
@@ -765,8 +766,9 @@ function observeToolbar(togglePanel) {
     if ((msg.type === 'bili-mux-progress' || msg.type === 'bili-mux-result') && !msg.routed) return;
 
     if (msg.type === 'bili-mux-progress') {
-      setBar('m', msg.ratio || 0);
-      setStatus('浏览器内合成中 ' + Math.round((msg.ratio || 0) * 100) + '%');
+      const r = typeof msg.ratio === 'number' ? msg.ratio : 0;
+      setBar('m', r);
+      setStatus('浏览器内合成中 ' + Math.round(r * 100) + '%');
       return;
     }
     if (msg.type === 'bili-mux-result') {
