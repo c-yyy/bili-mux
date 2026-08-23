@@ -4,11 +4,19 @@
 
 **English** | [中文](./README.md)
 
+## Download Extension
+
+[⬇️ Download Bili-Mux v1.1.0 (.crx)](https://github.com/c-yyy/bili-mux/raw/main/Bili-Mux-v1.1.0.crx)
+
+📄 [Privacy Policy](https://c-yyy.github.io/bili-mux/privacy.html)
+
 A Manifest V3 Chrome extension that injects a download panel into Bilibili video pages, supporting cover download, DASH audio/video stream saving, in-browser ffmpeg.wasm MP4 muxing, FLV merge download, and multi-part batch download.
 
 > **For personal learning and archival use only. Do not use for mass ripping or redistribution.**
 
 ## Features
+
+<p align="center"><img src="screenshots/20260823133959_326_187.png" alt="Bili-Mux download panel screenshot" width="720"></p>
 
 | Feature | Description |
 |---------|-------------|

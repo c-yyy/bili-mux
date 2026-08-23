@@ -4,11 +4,19 @@
 
 [English](./README.en.md) | **中文**
 
+## 下载插件
+
+[⬇️ 下载 Bili-Mux v1.1.0（.crx）](https://github.com/c-yyy/bili-mux/raw/main/Bili-Mux-v1.1.0.crx)
+
+📄 [隐私政策](https://c-yyy.github.io/bili-mux/privacy.html)
+
 一个 Manifest V3 Chrome 扩展，在 B站视频页注入下载面板，支持封面下载、DASH 音视频流分离保存、浏览器内 ffmpeg.wasm 合成 MP4、FLV 合并下载与分P批量下载。
 
 > **仅供个人学习留存使用，请勿用于批量搬运或二次分发。**
 
 ## 功能一览
+
+<p align="center"><img src="screenshots/20260823133959_326_187.png" alt="哔哩喵下载面板截图" width="720"></p>
 
 | 功能 | 说明 |
 |------|------|
