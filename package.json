@@ -7,6 +7,7 @@
     "crx3": "^2.0.0"
   },
   "scripts": {
-    "pack": "bash tools/pack.sh"
+    "pack": "bash tools/pack.sh",
+    "zip": "bash tools/zip.sh"
   }
 }
