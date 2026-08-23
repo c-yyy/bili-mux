@@ -19,6 +19,13 @@ let _ff = null;
 let _loading = null;
 let _replyTo = null;
 let _logBuf = [];   // 缓存 ffmpeg 最近日志，用于失败时回显诊断
+// 标记本次 mux 是否遇到 emscripten ExitStatus（exit(0)）。
+// 单线程 core 同步执行 main，main 返回 0 时 emscripten 会 throw ExitStatus；
+// 0.11 包装层 run() 的 Promise executor 内部 throw → Promise reject。
+// 但 exit(0) 是正常退出，ffmpeg 通常已成功生成 out.mp4。
+// 此标志让 mux() 在成功返回后主动销毁实例 —— 因为 K 函数（处理 FFMPEG_END）
+// 没被调用，y（running 标志）卡 true，下次合成必然撞 "can only run one command at a time"。
+let _exitStatusOccurred = false;
 
 // chrome.runtime.sendMessage 只支持 JSON 序列化，ArrayBuffer 会被序列化成 {}，
 // 因此跨进程二进制载荷一律 base64；这里负责解码入站分块。
@@ -108,8 +115,9 @@ async function mux(videoBuf, audioBuf) {  // 入参为 Uint8Array（已由监听
   await prev;
 
   const ff = await getFFmpeg();
+  let result;
   try {
-    return await muxOnce(ff, videoBuf, audioBuf);
+    result = await muxOnce(ff, videoBuf, audioBuf);
     // 成功时保留实例复用：run() 成功 → FFMPEG_END 已收到 → running 已复位为 false，
     // MEMFS 已由 muxOnce 内 unlink 清理。实例可直接用于下次合成。
     // 不调 exit()：销毁后重建会触发 createFFmpegCore 的内部缓存问题，
@@ -123,10 +131,21 @@ async function mux(videoBuf, audioBuf) {  // 入参为 Uint8Array（已由监听
   } finally {
     release();
   }
+  // ExitStatus 场景：ffmpeg 实际成功了（exit 0），但 FFMPEG_END 没打印 →
+  // K 函数没复位 y（running），下次合成必然撞 "can only run one command at a time"。
+  // 必须销毁实例，下次 getFFmpeg 重新加载（wasm 已缓存，reload 快）。
+  if (_exitStatusOccurred) {
+    console.warn('[ffmpeg] 检测到 ExitStatus，主动销毁实例避免 running 卡 true');
+    try { ff.exit(); } catch (_) {}
+    _ff = null;
+    _loading = null;
+  }
+  return result;
 }
 
 async function muxOnce(ff, videoBuf, audioBuf) {
   _logBuf = [];
+  _exitStatusOccurred = false;
   const vExt = probeVideoExt(videoBuf);
   const vName = 'inv.' + vExt;
   const aName = 'ina.mp4';   // 参考实现把音频也按 mp4 容器命名，确保 ffmpeg 正确识别 aac
@@ -150,8 +169,21 @@ async function muxOnce(ff, videoBuf, audioBuf) {
       '-y', 'out.mp4'
     );
   } catch (e) {
-    const tail = _logBuf.slice(-20).join('\n');
-    throw new Error('ffmpeg 执行异常: ' + (e && e.message || e) + (tail ? ('\n' + tail) : ''));
+    const msg = String((e && e.message) || e);
+    // emscripten 单线程 core 在 _main 返回 0 时 throw ExitStatus
+    // ("Program terminated with exit(0)")。0.11 包装层 run() 的 Promise executor
+    // 内部 throw → Promise reject。但 exit(0) 是正常退出，ffmpeg 通常已成功生成 out.mp4。
+    // 此前日志显示无任何 ffmpeg stderr（没有 Input #0 / Stream mapping / Output #0），
+    // 说明 ffmpeg 还没来得及打印 FFMPEG_END 就直接 exit(0) 了 —— 可能是某些 fMP4 输入
+    // 触发了 ffmpeg 内部的早退路径。不 throw，继续检查 out.mp4 是否存在。
+    if (/exit\(0\)|Program terminated with exit/i.test(msg)) {
+      console.warn('[ffmpeg] run() 抛出 ExitStatus(exit(0))，ffmpeg 可能已成功，检查 out.mp4…');
+      _exitStatusOccurred = true;
+      // 不 throw，继续走下面的 stat 检查
+    } else {
+      const tail = _logBuf.slice(-20).join('\n');
+      throw new Error('ffmpeg 执行异常: ' + msg + (tail ? ('\n' + tail) : ''));
+    }
   }
   // 0.11 的 run 在 ffmpeg 失败时常不抛错而直接返回，需手动确认输出存在，否则抛出真实日志
   let size = 0;
@@ -225,11 +257,23 @@ async function remuxFlv(flvBytes) {
   _muxLock = new Promise((r) => { release = r; });
   await prev;
   const ff = await getFFmpeg();
+  let exitStatus = false;
   try {
     await ff.FS('writeFile', 'in.flv', flvBytes);
     console.log('[ffmpeg] FLV 转封装开始，输入', mb(flvBytes.length));
     // -fflags +genpts 规避 FLV 非单调时间戳导致的丢包；-c copy 仅换容器不重编码
-    await ff.run('-fflags', '+genpts', '-i', 'in.flv', '-c', 'copy', '-y', 'out.mp4');
+    try {
+      await ff.run('-fflags', '+genpts', '-i', 'in.flv', '-c', 'copy', '-y', 'out.mp4');
+    } catch (e) {
+      // 同 mux：emscripten ExitStatus(exit(0)) 可能从 run() reject 传出，但 ffmpeg 实际成功
+      const msg = String((e && e.message) || e);
+      if (/exit\(0\)|Program terminated with exit/i.test(msg)) {
+        console.warn('[ffmpeg] remuxFlv run() 抛出 ExitStatus(exit(0))，检查 out.mp4…');
+        exitStatus = true;
+      } else {
+        throw new Error('ffmpeg 执行异常: ' + msg);
+      }
+    }
     let size = 0;
     try { size = ff.FS('stat', 'out.mp4').size; } catch (e) { size = 0; }
     if (!size) {
@@ -239,6 +283,13 @@ async function remuxFlv(flvBytes) {
     const data = ff.FS('readFile', 'out.mp4');
     console.log('[ffmpeg] FLV 转封装完成，out.mp4 =', mb(data.length));
     try { ff.FS('unlink', 'in.flv'); ff.FS('unlink', 'out.mp4'); } catch (_) {}
+    // ExitStatus 场景：FFMPEG_END 没打印 → running 标志卡 true，下次合成 / 转封装会
+    // 撞 "can only run one command at a time"，必须销毁实例
+    if (exitStatus) {
+      try { ff.exit(); } catch (_) {}
+      _ff = null;
+      _loading = null;
+    }
     return new Uint8Array(data);
   } catch (e) {
     // 失败时销毁实例复位（running 可能卡住），下次重建
