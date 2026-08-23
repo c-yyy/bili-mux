@@ -411,8 +411,8 @@ function buildPanel(host) {
       <div class="resbox">
         <div class="res-title">实时资源占用</div>
         <div class="res-grid">
-          <div class="res-cell"><div class="rk">内存（本扩展）</div><div class="rv" id="res-mem">—</div></div>
-          <div class="res-cell"><div class="rk">网络（本工具下载）</div><div class="rv" id="res-net">0.0 MB/s</div></div>
+          <div class="res-cell"><div class="rk">内存</div><div class="rv" id="res-mem">—</div></div>
+          <div class="res-cell"><div class="rk">网络</div><div class="rv" id="res-net">0.0 MB/s</div></div>
         </div>
         <div class="res-note">内存为本扩展运行内存；网络为本工具实测下载速率。</div>
       </div>
