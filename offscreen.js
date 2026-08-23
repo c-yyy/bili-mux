@@ -254,6 +254,18 @@ async function remuxFlv(flvBytes) {
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!msg || !msg.type) return;
 
+  // 关键守卫：content script 的 chrome.runtime.sendMessage 会广播到扩展的每一帧
+  // ——Service Worker 和 offscreen 文档都会收到；而 background 收到后还会再转发一份。
+  // 不加守卫，每条协议消息会被 offscreen 处理两次：
+  //   · 第一个 bili-save-go 消费会话并成功下载；
+  //   · 第二个（background 转发）找不到会话，返回「save 会话不存在」，
+  //     竞态回传给 content 变成误报的「FLV 合并失败」。
+  //   · bili-mux-chunk 也会被累加两次，导致合成输入体积翻倍。
+  // 这里忽略 content 直连副本（sender.tab 有值），只处理 background 转发的
+  // 干净副本（sender.tab 为空）。bili-offscreen-ready 是 offscreen 主动发给 SW 的，
+  // 不经过此路径，不受影响。
+  if (sender && sender.tab) return;
+
   // ---- bili-save 协议：FLV 合并 / 分离流保存（content 拼好字节分块传入，go 时落地）----
 
   // save init：建立会话缓冲

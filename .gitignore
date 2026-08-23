@@ -11,3 +11,6 @@ node_modules/
 
 # macOS
 .DS_Store
+
+# 私钥（chrome --pack-extension-key=xxx.pem 生成）
+*.pem
