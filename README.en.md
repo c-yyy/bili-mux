@@ -6,15 +6,15 @@
 
 ## Download Extension
 
-[⬇️ Download Bili-Mux v1.1.0 (.crx)](https://github.com/c-yyy/bili-mux/raw/main/Bili-Mux-v1.1.0.crx)
+[⬇️ Download Bili-Mux v1.1.1 (.crx)](https://github.com/c-yyy/bili-mux/raw/main/Bili-Mux-v1.1.1.crx)
 
 📄 [Privacy Policy](https://c-yyy.github.io/bili-mux/privacy.html)
 
 ### Installation
 
 1. Open Chrome, enter `chrome://extensions/` in the address bar and enable "Developer mode" (top right).
-2. Drag the downloaded `Bili-Mux-v1.1.0.crx` onto the page and click "Add extension".
-3. Open any Bilibili video page (logged in) — a pink "Download" button at the end of the toolbar means it's installed.
+2. Drag the downloaded `Bili-Mux-v1.1.1.crx` onto the page and click "Add extension".
+3. Open any Bilibili video page (logged in) — a pink "Save" button at the end of the toolbar means it's installed.
 
 A Manifest V3 Chrome extension that injects a download panel into Bilibili video pages, supporting cover download, DASH audio/video stream saving, in-browser ffmpeg.wasm MP4 muxing, FLV merge download.
 
@@ -39,13 +39,13 @@ A Manifest V3 Chrome extension that injects a download panel into Bilibili video
 2. Open Chrome and navigate to `chrome://extensions/`.
 3. Enable "Developer mode" (top right).
 4. Click "Load unpacked" and select the project root directory.
-5. Open any `bilibili.com/video/` page (must be logged in). A pink "Download" button appears at the end of the video toolbar.
+5. Open any `bilibili.com/video/` page (must be logged in). A pink "Save" button appears at the end of the video toolbar.
 
 **Requirements**: Chrome 116+ (in-browser muxing depends on the Offscreen Document API).
 
 ## Usage
 
-1. Click the pink "Download" button in the Bilibili video toolbar to open the panel.
+1. Click the pink "Save" button in the Bilibili video toolbar to open the panel.
 2. **Mux MP4**: Select quality → click "Mux MP4 (in-browser)" → auto-download when the progress bar completes.
 3. **Separate download**: Click "Download video stream" / "Download audio stream" to get `.m4s` files, then merge with local ffmpeg:
    ```bash

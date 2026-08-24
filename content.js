@@ -379,7 +379,7 @@ const STYLE = `
 `;
 
 // 自有图标：粉色下载箭头（与扩展图标同款设计，站内工具栏里以粉色描边区别于 B站灰标）
-const ICON_SVG = `<svg viewBox="0 0 1024 1024" width="28" height="28" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M832 448h-192V0H384v448H192v64l320 320 320-320V448zM896 896H128v128h768v-128z" fill="#fb7299"/></svg>`;
+const ICON_SVG = `<svg viewBox="0 0 1024 1024" width="20" height="20" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M832 448h-192V0H384v448H192v64l320 320 320-320V448zM896 896H128v128h768v-128z" fill="#fb7299"/></svg>`;
 
 function buildPanel(host) {
   const root = host.attachShadow({ mode: 'open' });
@@ -422,7 +422,7 @@ function buildPanel(host) {
       </div>
       <div class="fmt-help"><b>兼容下载</b>：HTTP-FLV 流，音视频单文件封装，码率低、体积小、下载快，成功率极高。<br><b>高级下载</b>：DASH 流，音视频分离，支持原画及 4K 高码率，有小概率失败。</div>
       <div class="panel-footer">
-        <span class="ver" id="panel-ver">v1.1.0</span>
+        <span class="ver" id="panel-ver">v1.1.1</span>
         <a href="https://github.com/c-yyy/bili-mux" target="_blank" rel="noopener" title="GitHub 仓库" aria-label="GitHub 仓库"><svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg></a>
       </div>
     </div>`;
@@ -437,10 +437,21 @@ function injectToolbarStyle() {
   style.id = 'bili-mux-style';
   style.textContent = `
     .bili-mux-item { display: inline-flex !important; align-items: center; gap: 4px;
-      box-sizing: border-box; user-select: none; cursor: pointer; }
-    .bili-mux-item svg { width: 24px; height: 24px; display: block; flex: none; }
+      box-sizing: border-box; user-select: none; cursor: pointer;
+      border: 2px solid transparent; border-radius: 6px; background: transparent;
+      transition: transform .18s ease, filter .18s ease, border-color .18s ease, background .18s ease; }
+    .bili-mux-item svg { width: 20px; height: 20px; display: block; flex: none; }
     .bili-mux-item .bili-mux-label { font-size: 13px; line-height: 1; color: #fb7299; }
-    .bili-mux-item:hover { color: #fb7299 !important; }
+    .bili-mux-item:hover { color: #fb7299 !important;
+      transform: translateY(-2px) scale(1.06);
+      filter: drop-shadow(0 3px 5px rgba(251,114,153,.45));
+      border-color: #fb7299; background: rgba(251,114,153,.12); }
+    .bili-mux-item:hover svg { animation: bili-mux-bob .85s ease-in-out infinite; }
+    @keyframes bili-mux-bob {
+      0% { transform: translateY(-2px); }
+      60% { transform: translateY(3px); }
+      100% { transform: translateY(-2px); }
+    }
   `;
   document.head.appendChild(style);
 }
@@ -455,7 +466,7 @@ function injectToggle(togglePanel) {
   btn.className = 'bili-mux-item';
   btn.setAttribute('role', 'button');
   btn.setAttribute('title', '哔哩喵 (Bili-Mux)');
-  btn.innerHTML = ICON_SVG + '<span class="bili-mux-label">下载</span>';
+  btn.innerHTML = ICON_SVG + '<span class="bili-mux-label">保存</span>';
 
   // 克隆容器里第一个元素的 computed style，让本按钮与兄弟元素同字体/颜色/间距
   // （cursor 除外：克隆来的 default 会盖掉手型光标，这里强制 pointer）
@@ -466,6 +477,8 @@ function injectToggle(togglePanel) {
      'padding', 'paddingLeft', 'paddingRight', 'paddingTop', 'paddingBottom',
      'margin', 'textAlign'].forEach((p) => { if (cs[p]) btn.style[p] = cs[p]; });
   }
+  // 覆盖克隆来的内边距：给带边框/背景的悬停态留出内部呼吸空间（inline 优先于 CSS）
+  btn.style.padding = '5px 9px';
   btn.style.cursor = 'pointer';
   let _toggleLast = 0;
   btn.addEventListener('click', (e) => {
@@ -565,7 +578,7 @@ function observeToolbar(togglePanel) {
   let _gen = 0;            // URL 变化世代号：防止快速切换时旧请求回写新数据
   let _lastBvid = bvid;    // 上次解析的视频 ID
   let _lastSearch = location.search; // 上次 URL query（含 ?p=）
-  const _ver = (chrome.runtime.getManifest && chrome.runtime.getManifest().version) || '1.1.0';
+  const _ver = (chrome.runtime.getManifest && chrome.runtime.getManifest().version) || '1.1.1';
   const elVer = $('panel-ver');
   if (elVer) elVer.textContent = 'v' + _ver;
   console.info('%c bili-mux %c v' + _ver + ' %c 加载成功 ',

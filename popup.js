@@ -5,7 +5,7 @@
 document.addEventListener('DOMContentLoaded', () => {
   // 版本号
   chrome.runtime.getManifest && (document.getElementById('ver').textContent =
-    'v' + (chrome.runtime.getManifest().version || '1.1.0'));
+    'v' + (chrome.runtime.getManifest().version || '1.1.1'));
 
   // 打开 Bilibili（首页）：直接新开一个标签页
   document.getElementById('open').addEventListener('click', async () => {

@@ -6,15 +6,15 @@
 
 ## 下载插件
 
-[⬇️ 下载 Bili-Mux v1.1.0（.crx）](https://github.com/c-yyy/bili-mux/raw/main/Bili-Mux-v1.1.0.crx)
+[⬇️ 下载 Bili-Mux v1.1.1（.crx）](https://github.com/c-yyy/bili-mux/raw/main/Bili-Mux-v1.1.1.crx)
 
 📄 [隐私政策](https://c-yyy.github.io/bili-mux/privacy.html)
 
 ### 安装教程
 
 1. 打开 Chrome，地址栏输入 `chrome://extensions/` 并开启右上角「开发者模式」。
-2. 将下载的 `Bili-Mux-v1.1.0.crx` 拖入页面，点击「添加扩展程序」。
-3. 打开任意 B站视频页（需已登录），工具栏末尾出现粉色「下载」按钮即安装成功。
+2. 将下载的 `Bili-Mux-v1.1.1.crx` 拖入页面，点击「添加扩展程序」。
+3. 打开任意 B站视频页（需已登录），工具栏末尾出现粉色「保存」按钮即安装成功。
 
 一个 Manifest V3 Chrome 扩展，在 B站视频页注入下载面板，支持封面下载、DASH 音视频流分离保存、浏览器内 ffmpeg.wasm 合成 MP4、FLV 合并下载。
 
@@ -39,13 +39,13 @@
 2. 打开 Chrome，进入 `chrome://extensions/`。
 3. 开启右上角「开发者模式」。
 4. 点击「加载已解压的扩展程序」，选择项目根目录。
-5. 打开任意 `bilibili.com/video/` 页面（需已登录），视频工具栏末尾会出现粉色「下载」按钮。
+5. 打开任意 `bilibili.com/video/` 页面（需已登录），视频工具栏末尾会出现粉色「保存」按钮。
 
 **环境要求**：Chrome 116+（浏览器内合成依赖 Offscreen Document API）。
 
 ## 使用方法
 
-1. 在 B站视频页点击工具栏的粉色「下载」按钮，展开面板。
+1. 在 B站视频页点击工具栏的粉色「保存」按钮，展开面板。
 2. **合成 MP4**：选择清晰度 → 点击「合成 MP4（浏览器内）」→ 进度条完成后自动下载。
 3. **分离下载**：点击「下载视频流」/「下载音频流」，分别得到 `.m4s` 文件，可用本地 ffmpeg 合并：
    ```bash

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "哔哩喵 (Bili-Mux)",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "哔哩喵 — 解析B站视频直链与封面，支持分P批量、FLV合并下载、视频流与音频流分别保存、浏览器内 ffmpeg.wasm 合成 MP4。仅供个人学习留存，勿二次分发。",
   "icons": {
     "16": "icons/icon16.png",
