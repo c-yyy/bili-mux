@@ -129,6 +129,17 @@ function getBvid() {
   return m ? m[1] : null;
 }
 
+// 取当前 URL 对应分P的 cid：多P视频点击不同 P 时仅 ?p= 变化、bvid 不变，
+// 需据此切到正确的 cid 重新解析流地址；单P视频直接返回 view.cid。
+function currentCid(view) {
+  const pm = new URLSearchParams(location.search).get('p');
+  const p = pm ? parseInt(pm, 10) : 1;
+  if (view && view.pages && view.pages.length && p >= 1 && p <= view.pages.length) {
+    return view.pages[p - 1].cid;
+  }
+  return view ? view.cid : null;
+}
+
 async function fetchView(bvid) {
   const r = await fetch(`https://api.bilibili.com/x/web-interface/view?bvid=${bvid}`, { credentials: 'include' });
   const j = await r.json();
@@ -498,7 +509,7 @@ function observeToolbar(togglePanel) {
 /* ============================ 主逻辑 ============================ */
 (function main() {
   if (document.getElementById('bili-mux-host')) return; // 防止重复注入
-  const bvid = getBvid();
+  let bvid = getBvid();
   if (!bvid) return;
 
   const host = document.createElement('div');
@@ -559,6 +570,9 @@ function observeToolbar(togglePanel) {
   let viewData = null;     // view 接口结果
   let dashData = null;     // playurl DASH 结果
   let flvData = null;      // playurl FLV 结果
+  let _gen = 0;            // URL 变化世代号：防止快速切换时旧请求回写新数据
+  let _lastBvid = bvid;    // 上次解析的视频 ID
+  let _lastSearch = location.search; // 上次 URL query（含 ?p=）
   const _ver = (chrome.runtime.getManifest && chrome.runtime.getManifest().version) || '1.1.0';
   const elVer = $('panel-ver');
   if (elVer) elVer.textContent = 'v' + _ver;
@@ -627,10 +641,59 @@ function observeToolbar(togglePanel) {
 
   // 把触发按钮注入 B站播放器工具栏（容器末尾），SPA 切换后自动补回
   observeToolbar(togglePanel);
+  // 监听 URL 变化（SPA 切换视频 / 切换分P），重新解析封面与下载相关流
+  watchUrl();
+
+  // SPA 切换视频 / 点击其它 P：URL（bvid 或 ?p=）变化后重新解析封面与下载相关流。
+  // 包装 history API + 监听 popstate/hashchange + 轮询兜底（B站 SPA 走 pushState，
+  // 个别异步渲染路径可能漏捕获，1.5s 轮询足够轻量且可靠）。
+  function resetPanelForNewVideo() {
+    elTitle.textContent = '解析中…';
+    elCover.style.display = 'none';
+    elPages.classList.remove('show');
+    $('muxbox').style.display = 'none';
+    $('flvbox').style.display = 'none';
+    setStatus('');
+  }
+
+  function onUrlChange() {
+    const newBvid = getBvid();
+    const newSearch = location.search;
+    if (newBvid === _lastBvid && newSearch === _lastSearch) return; // 无变化
+    _lastBvid = newBvid;
+    _lastSearch = newSearch;
+    if (!newBvid) {
+      // 离开视频页（例如回到首页）：不销毁面板 DOM，仅收起，等待下次进入视频页
+      closePanel();
+      return;
+    }
+    bvid = newBvid;
+    resetPanelForNewVideo();
+    init();
+  }
+
+  function watchUrl() {
+    const _ps = history.pushState, _rs = history.replaceState;
+    history.pushState = function () {
+      const r = _ps.apply(this, arguments);
+      onUrlChange();
+      return r;
+    };
+    history.replaceState = function () {
+      const r = _rs.apply(this, arguments);
+      onUrlChange();
+      return r;
+    };
+    window.addEventListener('popstate', onUrlChange);
+    window.addEventListener('hashchange', onUrlChange);
+    setInterval(onUrlChange, 1500); // 轮询兜底
+  }
 
   async function init() {
+    const myGen = ++_gen; // 本次解析世代号；若期间发生 URL 变化，旧请求回写会被丢弃
     try {
       viewData = await fetchView(bvid);
+      if (myGen !== _gen) return;
       elTitle.textContent = viewData.title;
       // 副标题：URL 中的视频 ID（BVID / 老格式 avid）+ 封面右键操作提示
       $('subtitle').innerHTML = '<span class="id">' + bvid + '</span> <span class="hint">（封面图可右键复制或保存）</span>';
@@ -646,9 +709,11 @@ function observeToolbar(togglePanel) {
         div.innerHTML = `<input type="checkbox" data-cid="${p.cid}" data-title="${p.part}"/><span title="${p.part}">${p.part}</span>`;
         elPagesList.appendChild(div);
       });
-      // 默认拿当前 cid 的 playurl
-      await loadPlayurl(viewData.cid);
+      // 默认拿当前分P（?p=）对应的 cid 的 playurl
+      await loadPlayurl(currentCid(viewData));
+      if (myGen !== _gen) return;
     } catch (e) {
+      if (myGen !== _gen) return; // 已被新导航取代，静默
       elTitle.textContent = '解析失败';
       setStatus(e.message);
     }

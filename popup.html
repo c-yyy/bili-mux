@@ -22,13 +22,12 @@
     <section class="block">
       <h3>怎么用</h3>
       <ol>
-        <li>打开任意一个 <code>bilibili.com/video/</code> 视频页（需已登录）。</li>
+        <li>点「打开 Bilibili」进入首页，再进入任意 <code>video</code> 视频页（需已登录）。</li>
         <li>右下角会出现粉色悬浮按钮，点开即是下载面板。</li>
         <li>选清晰度 →
-          <b>合成 MP4</b>：浏览器内直接 mux 成单个文件下载（无需本机 ffmpeg）；
+          <b>高级下载</b>：浏览器内直接合成 MP4 下载（无需本机 ffmpeg）；
           <b>分离下载</b>：分别下视频/音频流，本地用 ffmpeg 合并。</li>
-        <li><b>FLV 合并下载</b>：对支持 FLV 的视频，二进制拼接即得可播放文件。</li>
-        <li><b>分P列表</b>：勾选多 P 后批量合并下载。</li>
+        <li><b>兼容下载</b>：对支持 FLV 的视频，二进制拼接即得可播放文件（体积小、成功率高）。</li>
       </ol>
     </section>
 
@@ -43,7 +42,7 @@
     </section>
 
     <footer class="foot">
-      <button id="open" class="primary">打开 B站视频页</button>
+      <button id="open" class="primary">打开 Bilibili</button>
       <a id="cur" class="link" href="#" target="_blank" rel="noopener" hidden>跳到当前页面板 →</a>
     </footer>
   </div>
