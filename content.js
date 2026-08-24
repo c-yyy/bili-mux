@@ -7,7 +7,7 @@
 //   2. 调 view 接口拿 cid / 封面 pic / 分P pages / 标题 title
 //   3. 调 nav 接口拿 wbi 密钥 → 给 playurl 请求签名
 //   4. 调 playurl 拿 DASH 直链(video/audio 分离) 与 FLV 分段(durl)
-//   5. 面板里提供：封面下载 / 视频流+音频流分别保存 / FLV 合并下载 / 分P批量
+//   5. 面板里提供：封面下载 / 复制封面（图片到剪贴板）/ 视频流+音频流分别保存 / FLV 合并 / 浏览器内合成 MP4
 //
 // 封面：view.data.pic 是 i0.hdslb.com 静态直链，无 wbi 签名、无防盗链鉴权，
 //       chrome.downloads 直接下即可——这是整个项目里最简单的一环。
@@ -394,7 +394,7 @@ function buildPanel(host) {
       <img class="cover" id="cover" alt="封面"/>
       <div class="row">
         <button class="act primary" id="btn-cover">下载封面</button>
-        <button class="act" id="btn-pages">分P列表</button>
+        <button class="act" id="btn-copycover">复制封面</button>
       </div>
       <div class="row">
         <button class="act" id="btn-flvm">兼容下载（低码率）</button>
@@ -413,10 +413,6 @@ function buildPanel(host) {
       </div>
       <div class="flvbox" id="muxbox">
         <div class="pbar"><span class="pl">合成 MP4</span><div class="track"><div class="fill" id="pb-m"></div></div><span class="pv" id="pct-m">0%</span></div>
-      </div>
-      <div class="pages" id="pages">
-        <div id="pages-list"></div>
-        <div class="row"><button class="act primary" id="btn-batch">批量下载选中</button></div>
       </div>
       <div class="status" id="status"></div>
       <div class="resbox">
@@ -564,8 +560,7 @@ function observeToolbar(togglePanel) {
 
   const $ = (id) => root.getElementById(id);
   const elTitle = $('title'), elCover = $('cover'), elQn = $('qn'),
-    elStatus = $('status'), elPages = $('pages'),
-    elPagesList = $('pages-list');
+    elStatus = $('status');
 
   let viewData = null;     // view 接口结果
   let dashData = null;     // playurl DASH 结果
@@ -650,7 +645,6 @@ function observeToolbar(togglePanel) {
   function resetPanelForNewVideo() {
     elTitle.textContent = '解析中…';
     elCover.style.display = 'none';
-    elPages.classList.remove('show');
     $('muxbox').style.display = 'none';
     $('flvbox').style.display = 'none';
     setStatus('');
@@ -701,14 +695,6 @@ function observeToolbar(togglePanel) {
         elCover.src = viewData.pic;
         elCover.style.display = 'block';
       }
-      // 分P列表
-      elPagesList.innerHTML = '';
-      (viewData.pages || []).forEach((p) => {
-        const div = document.createElement('div');
-        div.className = 'pg';
-        div.innerHTML = `<input type="checkbox" data-cid="${p.cid}" data-title="${p.part}"/><span title="${p.part}">${p.part}</span>`;
-        elPagesList.appendChild(div);
-      });
       // 默认拿当前分P（?p=）对应的 cid 的 playurl
       await loadPlayurl(currentCid(viewData));
       if (myGen !== _gen) return;
@@ -899,29 +885,35 @@ function observeToolbar(togglePanel) {
     } catch (e) { setStatus('FLV 合并失败: ' + e.message); }
   });
 
-  // 分P列表显隐
-  guarded($('btn-pages'), () => elPages.classList.toggle('show'));
-
-  // 批量下载选中分P（FLV 合并，逐个顺序执行避免内存峰值）
-  guarded($('btn-batch'), async () => {
-    const boxes = elPagesList.querySelectorAll('input:checked');
-    if (!boxes.length) return setStatus('请先勾选分P');
-    setStatus(`批量下载 0/${boxes.length}…`);
-    for (let i = 0; i < boxes.length; i++) {
-      const cid = boxes[i].dataset.cid;
-      const title = boxes[i].dataset.title;
+  // 复制封面到剪贴板：优先复制图片本身（可粘贴到聊天/编辑器），
+  // 若浏览器不支持图片写入或 fetch 受限，则降级复制封面链接。
+  // B站图片 CDN（i0/i1.hdslb.com）返回 access-control-allow-origin: *，可跨域读取为 Blob。
+  async function copyCover() {
+    if (!viewData || !viewData.pic) return setStatus('暂无封面');
+    const url = viewData.pic;
+    try {
+      const resp = await fetch(url, { mode: 'cors', credentials: 'omit' });
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      const blob = await resp.blob();
+      if (!blob || !blob.type.startsWith('image/')) throw new Error('非图片类型');
+      if (navigator.clipboard && typeof window.ClipboardItem === 'function') {
+        // ClipboardItem 接受的 MIME 必须是具体图片类型（png/jpeg/webp/gif）
+        const type = /^image\/(png|jpeg|webp|gif)$/.test(blob.type) ? blob.type : 'image/png';
+        await navigator.clipboard.write([new ClipboardItem({ [type]: blob })]);
+        return setStatus('已复制封面图片（可直接粘贴）');
+      }
+      throw new Error('当前环境不支持图片写入剪贴板');
+    } catch (e) {
+      // 兜底：复制封面链接
       try {
-        const data = await fetchPlayurl(bvid, Number(cid), 0, 80);
-        if (data.durl && data.durl.length) {
-          const bytes = await fetchAndConcat(data.durl.map(d => d.url));
-          await saveViaOffscreen(bytes, `${sanitize(viewData.title)}_${sanitize(title)}.flv`, 'video/x-flv');
-        }
-      } catch (e) { setStatus(`第 ${i + 1} 个失败: ${e.message}`); }
-      setStatus(`批量下载 ${i + 1}/${boxes.length}…`);
-      await new Promise(r => setTimeout(r, 800)); // 错开请求
+        await navigator.clipboard.writeText(url);
+        return setStatus('已复制封面链接（图片复制受限，已复制链接）');
+      } catch (_) {
+        return setStatus('复制失败：' + (e && e.message || e));
+      }
     }
-    setStatus('批量下载完成');
-  });
+  }
+  guarded($('btn-copycover'), copyCover);
 
   // 来自 background 的定向消息：popup 唤起面板、合成进度、合成结果。
   // 合成相关消息带 routed 标记（由 background 从 offscreen 转发时加上），

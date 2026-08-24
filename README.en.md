@@ -16,7 +16,7 @@
 2. Drag the downloaded `Bili-Mux-v1.1.0.crx` onto the page and click "Add extension".
 3. Open any Bilibili video page (logged in) — a pink "Download" button at the end of the toolbar means it's installed.
 
-A Manifest V3 Chrome extension that injects a download panel into Bilibili video pages, supporting cover download, DASH audio/video stream saving, in-browser ffmpeg.wasm MP4 muxing, FLV merge download, and multi-part batch download.
+A Manifest V3 Chrome extension that injects a download panel into Bilibili video pages, supporting cover download, copy cover, DASH audio/video stream saving, in-browser ffmpeg.wasm MP4 muxing, FLV merge download.
 
 > **For personal learning and archival use only. Do not use for mass ripping or redistribution.**
 
@@ -27,11 +27,11 @@ A Manifest V3 Chrome extension that injects a download panel into Bilibili video
 | Feature | Description |
 |---------|-------------|
 | Cover download | Static direct URL, saved via `chrome.downloads` |
+| Copy cover | One click copies the cover image to the clipboard (image preferred, falls back to link) |
 | DASH video stream | Video `.m4s` saved separately (up to 4K) |
 | DASH audio stream | Audio `.m4s` saved separately |
 | In-browser MP4 mux | Fetches audio/video streams, muxes via ffmpeg.wasm (Offscreen Document) into a single MP4 — no local ffmpeg needed |
 | FLV merge download | Legacy HTTP-FLV segments binary-concatenated into a playable file; lower bitrate, smaller size |
-| Multi-part batch | Select multiple parts (P), batch FLV merge download sequentially |
 | Real-time resource usage | Panel shows extension memory and network download speed |
 
 ## Installation
@@ -53,7 +53,7 @@ A Manifest V3 Chrome extension that injects a download panel into Bilibili video
    ffmpeg -i video.m4s -i audio.m4s -c copy output.mp4
    ```
 4. **FLV merge**: Click "FLV merge download (low bitrate)" to get a playable `.flv` file directly.
-5. **Multi-part batch**: Click "Part list" → check parts → "Batch download selected".
+5. **Copy cover**: Click "Copy cover" — the cover image goes straight to the clipboard (paste into chat/editors); falls back to copying the cover link if the environment restricts image writing.
 
 ## Project Structure
 
