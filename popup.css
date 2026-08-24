@@ -74,6 +74,7 @@ code {
   font-size: 12px;
 }
 b { color: var(--pink-d); }
+.pink { color: var(--pink); font-weight: 700; }
 
 .foot {
   display: flex;
