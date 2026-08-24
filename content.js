@@ -7,7 +7,7 @@
 //   2. 调 view 接口拿 cid / 封面 pic / 分P pages / 标题 title
 //   3. 调 nav 接口拿 wbi 密钥 → 给 playurl 请求签名
 //   4. 调 playurl 拿 DASH 直链(video/audio 分离) 与 FLV 分段(durl)
-//   5. 面板里提供：封面下载 / 复制封面（图片到剪贴板）/ 视频流+音频流分别保存 / FLV 合并 / 浏览器内合成 MP4
+//   5. 面板里提供：封面下载 / 视频流+音频流分别保存 / FLV 合并 / 浏览器内合成 MP4
 //
 // 封面：view.data.pic 是 i0.hdslb.com 静态直链，无 wbi 签名、无防盗链鉴权，
 //       chrome.downloads 直接下即可——这是整个项目里最简单的一环。
@@ -376,11 +376,10 @@ const STYLE = `
   .res-cell { background: #fafafa; border: 2px solid #000; border-radius: 6px; padding: 6px 8px; }
   .res-cell .rk { font-size: 10px; color: #666; }
   .res-cell .rv { font-size: 14px; font-weight: 700; color: #fb7299; font-variant-numeric: tabular-nums; }
-  .res-note { font-size: 10px; color: #888; margin-top: 6px; line-height: 1.4; }
 `;
 
 // 自有图标：粉色下载箭头（与扩展图标同款设计，站内工具栏里以粉色描边区别于 B站灰标）
-const ICON_SVG = `<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><g fill="#fb7299"><rect x="10.8" y="4.6" width="2.4" height="8.2"/><path d="M6.4 11.4 L12 17 L17.6 11.4 L16.3 10.1 L12 14.4 L7.7 10.1 Z"/><rect x="5" y="18.3" width="14" height="1.8" rx="0.9"/></g></svg>`;
+const ICON_SVG = `<svg viewBox="0 0 1024 1024" width="28" height="28" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M832 448h-192V0H384v448H192v64l320 320 320-320V448zM896 896H128v128h768v-128z" fill="#fb7299"/></svg>`;
 
 function buildPanel(host) {
   const root = host.attachShadow({ mode: 'open' });
@@ -394,7 +393,6 @@ function buildPanel(host) {
       <img class="cover" id="cover" alt="封面"/>
       <div class="row">
         <button class="act primary" id="btn-cover">下载封面</button>
-        <button class="act" id="btn-copycover">复制封面</button>
       </div>
       <div class="row">
         <button class="act" id="btn-flvm">兼容下载（低码率）</button>
@@ -421,7 +419,6 @@ function buildPanel(host) {
           <div class="res-cell"><div class="rk">内存</div><div class="rv" id="res-mem">—</div></div>
           <div class="res-cell"><div class="rk">网络</div><div class="rv" id="res-net">0.0 MB/s</div></div>
         </div>
-        <div class="res-note">内存为本扩展运行内存；网络为本工具实测下载速率。</div>
       </div>
       <div class="fmt-help"><b>兼容下载</b>：HTTP-FLV 流，音视频单文件封装，码率低、体积小、下载快，成功率极高。<br><b>高级下载</b>：DASH 流，音视频分离，支持原画及 4K 高码率，有小概率失败。</div>
       <div class="panel-footer">
@@ -441,8 +438,8 @@ function injectToolbarStyle() {
   style.textContent = `
     .bili-mux-item { display: inline-flex !important; align-items: center; gap: 4px;
       box-sizing: border-box; user-select: none; cursor: pointer; }
-    .bili-mux-item svg { width: 20px; height: 20px; display: block; flex: none; }
-    .bili-mux-item .bili-mux-label { font-size: 13px; line-height: 1; }
+    .bili-mux-item svg { width: 24px; height: 24px; display: block; flex: none; }
+    .bili-mux-item .bili-mux-label { font-size: 13px; line-height: 1; color: #fb7299; }
     .bili-mux-item:hover { color: #fb7299 !important; }
   `;
   document.head.appendChild(style);
@@ -884,36 +881,6 @@ function observeToolbar(togglePanel) {
       else setStatus('已触发下载');
     } catch (e) { setStatus('FLV 合并失败: ' + e.message); }
   });
-
-  // 复制封面到剪贴板：优先复制图片本身（可粘贴到聊天/编辑器），
-  // 若浏览器不支持图片写入或 fetch 受限，则降级复制封面链接。
-  // B站图片 CDN（i0/i1.hdslb.com）返回 access-control-allow-origin: *，可跨域读取为 Blob。
-  async function copyCover() {
-    if (!viewData || !viewData.pic) return setStatus('暂无封面');
-    const url = viewData.pic;
-    try {
-      const resp = await fetch(url, { mode: 'cors', credentials: 'omit' });
-      if (!resp.ok) throw new Error('HTTP ' + resp.status);
-      const blob = await resp.blob();
-      if (!blob || !blob.type.startsWith('image/')) throw new Error('非图片类型');
-      if (navigator.clipboard && typeof window.ClipboardItem === 'function') {
-        // ClipboardItem 接受的 MIME 必须是具体图片类型（png/jpeg/webp/gif）
-        const type = /^image\/(png|jpeg|webp|gif)$/.test(blob.type) ? blob.type : 'image/png';
-        await navigator.clipboard.write([new ClipboardItem({ [type]: blob })]);
-        return setStatus('已复制封面图片（可直接粘贴）');
-      }
-      throw new Error('当前环境不支持图片写入剪贴板');
-    } catch (e) {
-      // 兜底：复制封面链接
-      try {
-        await navigator.clipboard.writeText(url);
-        return setStatus('已复制封面链接（图片复制受限，已复制链接）');
-      } catch (_) {
-        return setStatus('复制失败：' + (e && e.message || e));
-      }
-    }
-  }
-  guarded($('btn-copycover'), copyCover);
 
   // 来自 background 的定向消息：popup 唤起面板、合成进度、合成结果。
   // 合成相关消息带 routed 标记（由 background 从 offscreen 转发时加上），
