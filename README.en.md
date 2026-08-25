@@ -22,7 +22,7 @@ A Manifest V3 Chrome extension that injects a download panel into Bilibili video
 
 ## Features
 
-<p align="center"><img src="screenshots/20260823133959_326_187.png" alt="Bili-Mux download panel screenshot" width="720"></p>
+<p align="center"><img src="screenshots/ScreenShot_2026-08-26_000521_539.png" alt="Bili-Mux download panel screenshot" width="720"></p>
 
 | Feature | Description |
 |---------|-------------|
