@@ -22,7 +22,7 @@
 
 ## 功能一览
 
-<p align="center"><img src="screenshots/20260823133959_326_187.png" alt="哔哩喵下载面板截图" width="720"></p>
+<p align="center"><img src="screenshots/ScreenShot_2026-08-26_000521_539.png" alt="哔哩喵下载面板截图" width="720"></p>
 
 | 功能 | 说明 |
 |------|------|
