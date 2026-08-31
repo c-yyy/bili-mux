@@ -6,14 +6,14 @@
 
 ## 下载插件
 
-[⬇️ 下载 Bili-Mux v1.1.1（.crx）](https://github.com/c-yyy/bili-mux/raw/main/Bili-Mux-v1.1.1.crx)
+[⬇️ 下载 Bili-Mux v1.1.2（.crx）](https://github.com/c-yyy/bili-mux/raw/main/Bili-Mux-v1.1.2.crx)
 
 📄 [隐私政策](https://c-yyy.github.io/bili-mux/privacy.html)
 
 ### 安装教程
 
 1. 打开 Chrome，地址栏输入 `chrome://extensions/` 并开启右上角「开发者模式」。
-2. 将下载的 `Bili-Mux-v1.1.1.crx` 拖入页面，点击「添加扩展程序」。
+2. 将下载的 `Bili-Mux-v1.1.2.crx` 拖入页面，点击「添加扩展程序」。
 3. 打开任意 B站视频页（需已登录），工具栏末尾出现粉色「保存」按钮即安装成功。
 
 一个 Manifest V3 Chrome 扩展，在 B站视频页注入下载面板，支持封面下载、DASH 音视频流分离保存、浏览器内 ffmpeg.wasm 合成 MP4、FLV 合并下载。

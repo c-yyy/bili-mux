@@ -140,19 +140,104 @@ function currentCid(view) {
   return view ? view.cid : null;
 }
 
+// 统一构造视频标识参数：老 av 号用 aid=（bvid 参数不接受 av 前缀，否则接口返回 -400），
+// BV 号用 bvid=。**仅适用于 view 接口**——view 对 aid/bvid 都接受。
+function idParam(bvid) {
+  return /^av\d+$/i.test(bvid)
+    ? { aid: parseInt(bvid.slice(2), 10) }
+    : { bvid };
+}
+
+// playurl 接口只接受 bvid=，传 aid= 一律 -400（实测：view?aid= 正常，playurl?aid= 报请求错误）。
+// 因此 av 号需先经 view 接口换成真正的 BV 号；结果按 aid 缓存，避免重复打接口。
+const _avBvCache = new Map();
+async function toBvid(id) {
+  if (!/^av\d+$/i.test(id)) return id;
+  if (_avBvCache.has(id)) return _avBvCache.get(id);
+  const d = await fetchView(id);
+  if (d && d.bvid) {
+    _avBvCache.set(id, d.bvid);
+    return d.bvid;
+  }
+  throw new Error('无法解析该 av 号对应的 BV 号');
+}
+
+// 统一取 JSON：风控拦截时 B 站会直接回 HTTP 412（HTML 而非 JSON），
+// 直接 r.json() 会抛 SyntaxError，掩盖真实原因，这里转成可读错误。
+async function fetchJson(url) {
+  const r = await fetch(url, { credentials: 'include' });
+  const txt = await r.text();
+  try {
+    return JSON.parse(txt);
+  } catch (_) {
+    throw new Error('HTTP ' + r.status + (r.status === 412 ? '（请求被风控拦截，请稍后重试）' : '（非 JSON 响应）'));
+  }
+}
+
+// 接口返回的图片/CDN 直链可能是 http://，直接用于页面会触发 Mixed Content。
+// hdslb/bilivideo CDN 均支持 HTTPS，统一升级避免控制台告警与升级失败。
+function toHttps(u) {
+  return typeof u === 'string' ? u.replace(/^http:\/\//i, 'https://') : u;
+}
+
 async function fetchView(bvid) {
-  const r = await fetch(`https://api.bilibili.com/x/web-interface/view?bvid=${bvid}`, { credentials: 'include' });
-  const j = await r.json();
-  if (j.code !== 0) throw new Error('view 接口错误: ' + j.message);
+  const base = 'https://api.bilibili.com/x/web-interface/view?' + new URLSearchParams(idParam(bvid));
+
+  async function doFetch(url) {
+    const r = await fetch(url, { credentials: 'include' });
+    return r.json();
+  }
+
+  let j = await doFetch(base);
+  if (j.code !== 0 && [-400, -403, -412].includes(j.code)) {
+    // 部分视频在风控或签名校验下返回非零，尝试追加 WBI 签名重试一次
+    try {
+      const mixinKey = await getMixinKey();
+      // signWbi 的返回值已包含全部业务参数，不需再拼 base（避免参数重复）
+      const query = signWbi(idParam(bvid), mixinKey);
+      j = await doFetch(`https://api.bilibili.com/x/web-interface/view?${query}`);
+    } catch (_) { /* WBI 重试失败，沿用原始错误 */ }
+  }
+
+  if (j.code !== 0) {
+    const msgMap = { '-400': '请求参数错误', '-403': '无访问权限(需登录/大会员)',
+      '-404': '视频不存在或已删除', '-412': '请求被风控拦截',
+      '62002': '稿件不可见', '62004': '稿件审核中', '62012': '仅UP主可见' };
+    throw new Error('view 接口错误(' + j.code + '): ' + (msgMap[String(j.code)] || j.message));
+  }
   return j.data;
 }
 
 async function fetchPlayurl(bvid, cid, fnval, qn) {
-  const mixinKey = await getMixinKey();
-  const query = signWbi({ bvid, cid, qn, fnval, fourk: 1 }, mixinKey);
-  const r = await fetch(`https://api.bilibili.com/x/player/wbi/playurl?${query}`, { credentials: 'include' });
-  const j = await r.json();
-  if (j.code !== 0) throw new Error('playurl 接口错误: ' + j.message);
+  // playurl 只吃 bvid：av 号先换成 BV 号，否则必然 -400
+  const bv = await toBvid(bvid);
+  const params = { bvid: bv, cid, qn, fnval, fourk: 1 };
+
+  let j = null, lastErr = null;
+  // 主路径：WBI 签名接口
+  try {
+    const mixinKey = await getMixinKey();
+    const query = signWbi(params, mixinKey);
+    j = await fetchJson(`https://api.bilibili.com/x/player/wbi/playurl?${query}`);
+  } catch (e) {
+    lastErr = e;
+  }
+  // 降级：签名接口失败（风控 412 / 签名异常）时退回非签名接口重试一次
+  if (!j || j.code !== 0) {
+    try {
+      const alt = await fetchJson(`https://api.bilibili.com/x/player/playurl?${new URLSearchParams(params)}`);
+      if (alt && (alt.code === 0 || !j)) j = alt; // 降级成功或主路径根本没拿到 JSON
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  if (!j) throw lastErr || new Error('playurl 请求失败');
+
+  if (j.code !== 0) {
+    const msgMap = { '-352': '风控校验失败(请稍后再试)', '-400': '请求参数错误',
+      '-403': '无访问权限(需登录/大会员)', '-404': '视频不存在', '-412': '请求被风控拦截' };
+    throw new Error('playurl 接口错误(' + j.code + '): ' + (msgMap[String(j.code)] || j.message));
+  }
   return j.data;
 }
 
@@ -355,6 +440,11 @@ const STYLE = `
   .pg input { accent-color: #fb7299; }
   .pg span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .status { color: #fb7299; font-weight: 600; min-height: 16px; margin-top: 4px; }
+  .status-row { display: flex; align-items: center; gap: 6px; }
+  .btn-retry { background: none; border: none; cursor: pointer; padding: 2px; display: flex; align-items: center;
+    color: #fb7299; transition: transform .25s ease; flex-shrink: 0; }
+  .btn-retry:hover { transform: rotate(180deg); }
+  .btn-retry svg { width: 18px; height: 18px; display: block; }
   .flvbox { display: none; margin-top: 6px; }
   .pbar { display: flex; align-items: center; gap: 8px; margin: 6px 0; font-size: 12px; }
   .pbar .pl { width: 64px; flex: none; color: #1a1a1a; }
@@ -364,8 +454,12 @@ const STYLE = `
   .fmt-help { font-size: 11px; color: #6b6b6b; line-height: 1.55; margin-top: 8px;
     border-top: 2px dashed #000; padding-top: 8px; word-break: break-all; }
   .fmt-help b { color: #1a1a1a; }
-  .panel-footer { display: flex; align-items: center; gap: 8px; margin-top: 8px;
+  .panel-footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px;
     border-top: 2px dashed #000; padding-top: 8px; }
+  .panel-footer .footer-left { display: flex; align-items: center; gap: 6px; }
+  .panel-footer .footer-logo { width: 24px; height: 24px; border-radius: 6px; display: block; }
+  .panel-footer .footer-name { font-size: 12px; font-weight: 700; color: #1a1a1a; }
+  .panel-footer .footer-right { display: flex; align-items: center; gap: 8px; }
   .panel-footer .ver { font-size: 11px; color: #888; font-variant-numeric: tabular-nums; }
   .panel-footer a { display: inline-flex; align-items: center; color: #1a1a1a; }
   .panel-footer a:hover { color: #fb7299; }
@@ -380,6 +474,9 @@ const STYLE = `
 
 // 自有图标：粉色下载箭头（与扩展图标同款设计，站内工具栏里以粉色描边区别于 B站灰标）
 const ICON_SVG = `<svg viewBox="0 0 1024 1024" width="20" height="20" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M832 448h-192V0H384v448H192v64l320 320 320-320V448zM896 896H128v128h768v-128z" fill="#fb7299"/></svg>`;
+
+// 重试/刷新图标（解析失败时显示在状态文字旁）
+const REFRESH_SVG = `<svg viewBox="0 0 1024 1024" width="18" height="18" xmlns="http://www.w3.org/2000/svg"><path d="M369.777778 160.568889a42.666667 42.666667 0 0 1-42.666667 42.666667H128a42.666667 42.666667 0 1 1 0-85.333334h199.111111a42.666667 42.666667 0 0 1 42.666667 42.666667" fill="#fb7299"/><path d="M327.111111 402.346667a42.666667 42.666667 0 0 1-42.666667-42.666667v-199.111111a42.666667 42.666667 0 1 1 85.333334 0v199.111111a42.666667 42.666667 0 0 1-42.666667 42.666667" fill="#fb7299"/><path d="M512.014222 938.652444h-0.753778a424.533333 424.533333 0 0 1-294.272-124.913777c-80.583111-80.583111-124.956444-187.733333-124.956444-301.696 0-113.976889 44.373333-221.112889 124.970667-301.696l73.088-73.116445a42.680889 42.680889 0 0 1 60.359111 60.344889l-73.102222 73.102222a339.057778 339.057778 0 0 0-99.982223 241.351111A339.128889 339.128889 0 0 0 277.333333 753.422222a339.640889 339.640889 0 0 0 235.406223 99.911111 42.680889 42.680889 0 0 1-0.725334 85.333334M654.222222 863.473778v-0.014222a42.666667 42.666667 0 0 1 42.666667-42.666667h199.111111a42.666667 42.666667 0 0 1 0 85.333333H696.888889a42.666667 42.666667 0 0 1-42.666667-42.666666" fill="#fb7299"/><path d="M696.888889 621.681778a42.666667 42.666667 0 0 1 42.666667 42.666666v199.111112a42.666667 42.666667 0 0 1-85.333334 0v-199.111112a42.666667 42.666667 0 0 1 42.666667-42.666666" fill="#fb7299"/><path d="M703.715556 899.285333a42.638222 42.638222 0 0 1-30.165334-72.832l73.130667-73.102222c133.077333-133.091556 133.077333-349.653333 0-482.730667A339.100444 339.100444 0 0 0 505.315556 170.666667a42.666667 42.666667 0 1 1 0-85.333334c113.976889 0 221.112889 44.387556 301.681777 124.970667 166.357333 166.343111 166.357333 436.387556 0 602.730666l-73.130667 73.102223a42.638222 42.638222 0 0 1-30.15111 8.148444z" fill="#fb7299"/></svg>`;
 
 function buildPanel(host) {
   const root = host.attachShadow({ mode: 'open' });
@@ -412,7 +509,7 @@ function buildPanel(host) {
       <div class="flvbox" id="muxbox">
         <div class="pbar"><span class="pl">合成 MP4</span><div class="track"><div class="fill" id="pb-m"></div></div><span class="pv" id="pct-m">0%</span></div>
       </div>
-      <div class="status" id="status"></div>
+      <div class="status-row"><div class="status" id="status"></div><button class="btn-retry" id="btn-retry" style="display:none;" title="重新解析" aria-label="重新解析"></button></div>
       <div class="resbox">
         <div class="res-title">实时资源占用</div>
         <div class="res-grid">
@@ -422,8 +519,9 @@ function buildPanel(host) {
       </div>
       <div class="fmt-help"><b>兼容下载</b>：HTTP-FLV 流，音视频单文件封装，码率低、体积小、下载快，成功率极高。<br><b>高级下载</b>：DASH 流，音视频分离，支持原画及 4K 高码率，有小概率失败。</div>
       <div class="panel-footer">
-        <span class="ver" id="panel-ver">v1.1.1</span>
-        <a href="https://github.com/c-yyy/bili-mux" target="_blank" rel="noopener" title="GitHub 仓库" aria-label="GitHub 仓库"><svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg></a>
+        <div class="footer-left"><img class="footer-logo" id="footer-logo" alt="Bili-Mux"/><span class="footer-name">哔哩喵</span></div>
+        <div class="footer-right"><span class="ver" id="panel-ver">v1.1.2</span>
+        <a href="https://github.com/c-yyy/bili-mux" target="_blank" rel="noopener" title="GitHub 仓库" aria-label="GitHub 仓库"><svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.26 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg></a></div>
       </div>
     </div>`;
   return root;
@@ -578,9 +676,15 @@ function observeToolbar(togglePanel) {
   let _gen = 0;            // URL 变化世代号：防止快速切换时旧请求回写新数据
   let _lastBvid = bvid;    // 上次解析的视频 ID
   let _lastSearch = location.search; // 上次 URL query（含 ?p=）
-  const _ver = (chrome.runtime.getManifest && chrome.runtime.getManifest().version) || '1.1.1';
+  const _ver = (chrome.runtime.getManifest && chrome.runtime.getManifest().version) || '1.1.2';
   const elVer = $('panel-ver');
   if (elVer) elVer.textContent = 'v' + _ver;
+  // 底部栏扩展图标（需 manifest web_accessible_resources 放行）
+  const elLogo = $('footer-logo');
+  if (elLogo) elLogo.src = chrome.runtime.getURL('icons/icon128.png');
+  // 重试按钮
+  const btnRetry = $('btn-retry');
+  if (btnRetry) { btnRetry.innerHTML = REFRESH_SVG; btnRetry.addEventListener('click', () => { btnRetry.style.display = 'none'; init(); }); }
   console.info('%c bili-mux %c v' + _ver + ' %c 加载成功 ',
     'padding: 2px 6px; border-radius: 3px 0 0 3px; color: #fff; background: #fb7299; font-weight: bold;',
     'padding: 2px 6px; color: #fff; background: #FF9999; font-weight: bold;',
@@ -695,14 +799,17 @@ function observeToolbar(togglePanel) {
 
   async function init() {
     const myGen = ++_gen; // 本次解析世代号；若期间发生 URL 变化，旧请求回写会被丢弃
+    if (btnRetry) btnRetry.style.display = 'none';
     try {
       viewData = await fetchView(bvid);
       if (myGen !== _gen) return;
+      // view 会回传真实 BV 号，先入缓存：av 号链接下 playurl 可直接复用，不必再打一次 view
+      if (viewData && viewData.bvid) _avBvCache.set(bvid, viewData.bvid);
       elTitle.textContent = viewData.title;
       // 副标题：URL 中的视频 ID（BVID / 老格式 avid）+ 封面右键操作提示
       $('subtitle').innerHTML = '<span class="id">' + bvid + '</span> <span class="hint">（封面图可右键复制或保存）</span>';
       if (viewData.pic) {
-        elCover.src = viewData.pic;
+        elCover.src = toHttps(viewData.pic);
         elCover.style.display = 'block';
       }
       // 默认拿当前分P（?p=）对应的 cid 的 playurl
@@ -712,6 +819,7 @@ function observeToolbar(togglePanel) {
       if (myGen !== _gen) return; // 已被新导航取代，静默
       elTitle.textContent = '解析失败';
       setStatus(e.message);
+      if (btnRetry) btnRetry.style.display = '';
     }
   }
 
@@ -733,12 +841,12 @@ function observeToolbar(togglePanel) {
     const qn = Number(elQn.value);
     const list = dashData.dash.video || [];
     let pick = list.find(v => v.id === qn) || list[0];
-    return [pick.baseUrl, ...(pick.backupUrl || [])].filter(Boolean);
+    return [pick.baseUrl, ...(pick.backupUrl || [])].filter(Boolean).map(toHttps);
   }
   function pickAudioUrls() {
     const list = dashData.dash.audio || [];
     let pick = list[0];
-    return [pick.baseUrl, ...(pick.backupUrl || [])].filter(Boolean);
+    return [pick.baseUrl, ...(pick.backupUrl || [])].filter(Boolean).map(toHttps);
   }
 
   // 关闭卡片（右上角 ×）
@@ -748,7 +856,7 @@ function observeToolbar(togglePanel) {
   guarded($('btn-cover'), async () => {
     if (!viewData || !viewData.pic) return setStatus('暂无封面');
     setStatus('封面下载中…');
-    const r = await downloadViaExtension(viewData.pic, `${sanitize(viewData.title)}_封面.jpg`);
+    const r = await downloadViaExtension(toHttps(viewData.pic), `${sanitize(viewData.title)}_封面.jpg`);
     setStatus(r.ok ? '封面已提交下载' : ('封面下载失败: ' + (r.error || '')));
   });
 
@@ -884,7 +992,7 @@ function observeToolbar(togglePanel) {
     $('flvbox').style.display = 'block';
     setBar('f', 0);
     try {
-      const urls = flvData.durl.map(d => d.url);
+      const urls = flvData.durl.map(d => toHttps(d.url));
       const bytes = await fetchAndConcat(urls, (ratio) => setBar('f', ratio));
       setBar('f', 1);
       setStatus('转封装为 MP4…');
