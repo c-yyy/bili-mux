@@ -18,6 +18,8 @@
 
 A Manifest V3 Chrome extension that injects a download panel into Bilibili video pages, supporting cover download, DASH audio/video stream saving, in-browser ffmpeg.wasm MP4 muxing, FLV merge download.
 
+**Supported pages**: regular video pages `/video/BVxxx` and `/video/av123`, plus "Watch later" / Favorites / Playlist pages under `/list/*` (there the video ID lives in the URL query, and switching to the next item re-parses automatically).
+
 > **For personal learning and archival use only. Do not use for mass ripping or redistribution.**
 
 ## Features

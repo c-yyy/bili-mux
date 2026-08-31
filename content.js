@@ -123,10 +123,22 @@ const QN_LABEL = {
 
 /* ============================ 接口调用 ============================ */
 function getBvid() {
-  // 提取 /video/ 之后的 ID（兼容老 av 链接），匹配不到则返回 null 让插件安静退出。
+  // 提取视频 ID，匹配不到则返回 null 让插件安静退出。
   // 命中后保留 URL 原始大小写——B 站 BV 号按位大小写敏感，av 前缀小写为常规形态。
+  // ① 常规视频页：/video/BV1xx411c7mD 或 /video/av170001
   const m = location.pathname.match(/\/video\/(BV[0-9A-Za-z]+|av\d+)/i);
-  return m ? m[1] : null;
+  if (m) return m[1];
+
+  // ② 稍后再看 / 收藏夹 / 播单：/list/watchlater?oid=117149746205974&bvid=BV1xwhN6KEaJ
+  //    这类页面 pathname 固定为 /list/xxx，视频 ID 在 query 里，切换下一集时只改 query。
+  if (/^\/list\//i.test(location.pathname)) {
+    const q = new URLSearchParams(location.search);
+    const bv = q.get('bvid');
+    if (bv && /^BV[0-9A-Za-z]+$/i.test(bv)) return bv; // 优先 bvid（playurl 只认 bvid）
+    const oid = q.get('oid');
+    if (oid && /^\d+$/.test(oid)) return 'av' + oid;   // 退化用 aid：view 走 aid=，playurl 内部再换 BV 号
+  }
+  return null;
 }
 
 // 取当前 URL 对应分P的 cid：多P视频点击不同 P 时仅 ?p= 变化、bvid 不变，
@@ -143,8 +155,9 @@ function currentCid(view) {
 // 统一构造视频标识参数：老 av 号用 aid=（bvid 参数不接受 av 前缀，否则接口返回 -400），
 // BV 号用 bvid=。**仅适用于 view 接口**——view 对 aid/bvid 都接受。
 function idParam(bvid) {
+  // aid 用字符串原样传：B站 aid 已是 15 位大整数，parseInt 会在超过 2^53 时丢精度
   return /^av\d+$/i.test(bvid)
-    ? { aid: parseInt(bvid.slice(2), 10) }
+    ? { aid: bvid.slice(2) }
     : { bvid };
 }
 
@@ -554,8 +567,24 @@ function injectToolbarStyle() {
   document.head.appendChild(style);
 }
 
+// 播放器工具栏容器：视频页为 .video-toolbar-left-main；稍后再看 / 收藏夹 / 播单（/list/*）
+// 是同一播放器组件的变体布局，class 可能有出入，这里按优先级兜底，取第一个命中的容器。
+const TOOLBAR_SELECTORS = [
+  '.video-toolbar-left-main',
+  '.video-toolbar-left',
+  '[class*="toolbar-left-main"]',
+  '[class*="toolbar-left"]'
+];
+function findToolbar() {
+  for (const sel of TOOLBAR_SELECTORS) {
+    const el = document.querySelector(sel);
+    if (el) return el;
+  }
+  return null;
+}
+
 function injectToggle(togglePanel) {
-  const toolbar = document.querySelector('.video-toolbar-left-main');
+  const toolbar = findToolbar();
   if (!toolbar) return false;
   if (document.getElementById('bili-mux-toggle')) return true;
 
@@ -598,7 +627,7 @@ function observeToolbar(togglePanel) {
     const iv = setInterval(() => {
       if (injectToggle(togglePanel)) {
         clearInterval(iv);
-      } else if (!document.querySelector('.video-toolbar-left-main')) {
+      } else if (!findToolbar()) {
         // 容器尚未出现，继续等待
       }
     }, 1200);
@@ -611,7 +640,9 @@ function observeToolbar(togglePanel) {
 }
 
 /* ============================ 主逻辑 ============================ */
-(function main() {
+// 整段包进 IIFE：main 与 bootstrap 都不外泄到全局
+(function () {
+function main() {
   if (document.getElementById('bili-mux-host')) return; // 防止重复注入
   let bvid = getBvid();
   if (!bvid) return;
@@ -1044,4 +1075,29 @@ function observeToolbar(togglePanel) {
   });
 
   init();
+}
+
+/* ============================ 引导层 ============================ */
+// /list/*（稍后再看 / 收藏夹 / 播单）页面首次进入时 URL 里往往没有 bvid/oid，
+// 用户点击列表中的视频后 B 站才用 pushState 补上。若此时主逻辑已因「无 ID」退出，
+// 就再没人响应这次 URL 变化 —— 扩展看起来就是「没加载」。
+// 因此这里在拿到视频 ID 之前持续监听 URL，一拿到就启动主逻辑。
+(function bootstrap() {
+  let started = false;
+  function tryStart() {
+    if (started || !getBvid()) return false;
+    started = true;
+    main();
+    return true;
+  }
+  if (tryStart()) return;
+
+  const _ps = history.pushState, _rs = history.replaceState;
+  history.pushState = function () { const r = _ps.apply(this, arguments); tryStart(); return r; };
+  history.replaceState = function () { const r = _rs.apply(this, arguments); tryStart(); return r; };
+  window.addEventListener('popstate', tryStart);
+  window.addEventListener('hashchange', tryStart);
+  const iv = setInterval(() => { if (tryStart()) clearInterval(iv); }, 500);
+  setTimeout(() => clearInterval(iv), 5 * 60 * 1000); // 最多等 5 分钟，避免长期空转
+})();
 })();

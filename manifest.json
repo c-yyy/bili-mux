@@ -33,7 +33,10 @@
       "matches": [
         "*://www.bilibili.com/video/*",
         "*://bilibili.com/video/*",
-        "*://m.bilibili.com/video/*"
+        "*://m.bilibili.com/video/*",
+        "*://www.bilibili.com/list/*",
+        "*://bilibili.com/list/*",
+        "*://m.bilibili.com/list/*"
       ],
       "js": ["content.js"],
       "run_at": "document_idle"
