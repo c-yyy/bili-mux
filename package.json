@@ -1,6 +1,6 @@
 {
   "name": "bili-mux",
-  "version": "1.1.2",
+  "version": "1.1.3",
   "private": true,
   "description": "哔哩喵 Bili-Mux — Chrome 扩展构建工具（crx3 打包）",
   "devDependencies": {

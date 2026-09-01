@@ -533,7 +533,7 @@ function buildPanel(host) {
       <div class="fmt-help"><b>兼容下载</b>：HTTP-FLV 流，音视频单文件封装，码率低、体积小、下载快，成功率极高。<br><b>高级下载</b>：DASH 流，音视频分离，支持原画及 4K 高码率，有小概率失败。</div>
       <div class="panel-footer">
         <div class="footer-left"><img class="footer-logo" id="footer-logo" alt="Bili-Mux"/><span class="footer-name">哔哩喵</span></div>
-        <div class="footer-right"><span class="ver" id="panel-ver">v1.1.2</span>
+        <div class="footer-right"><span class="ver" id="panel-ver">v1.1.3</span>
         <a href="https://github.com/c-yyy/bili-mux" target="_blank" rel="noopener" title="GitHub 仓库" aria-label="GitHub 仓库"><svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.26 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg></a></div>
       </div>
     </div>`;
@@ -707,7 +707,7 @@ function main() {
   let _gen = 0;            // URL 变化世代号：防止快速切换时旧请求回写新数据
   let _lastBvid = bvid;    // 上次解析的视频 ID
   let _lastSearch = location.search; // 上次 URL query（含 ?p=）
-  const _ver = (chrome.runtime.getManifest && chrome.runtime.getManifest().version) || '1.1.2';
+  const _ver = (chrome.runtime.getManifest && chrome.runtime.getManifest().version) || '1.1.3';
   const elVer = $('panel-ver');
   if (elVer) elVer.textContent = 'v' + _ver;
   // 底部栏扩展图标（需 manifest web_accessible_resources 放行）

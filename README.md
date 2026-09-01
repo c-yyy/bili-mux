@@ -6,14 +6,14 @@
 
 ## 下载插件
 
-[⬇️ 下载 Bili-Mux v1.1.2（.crx）](https://github.com/c-yyy/bili-mux/raw/main/Bili-Mux-v1.1.2.crx)
+[⬇️ 下载 Bili-Mux v1.1.3（.crx）](https://github.com/c-yyy/bili-mux/raw/main/Bili-Mux-v1.1.3.crx)
 
 📄 [隐私政策](https://c-yyy.github.io/bili-mux/privacy.html)
 
 ### 安装教程
 
 1. 打开 Chrome，地址栏输入 `chrome://extensions/` 并开启右上角「开发者模式」。
-2. 将下载的 `Bili-Mux-v1.1.2.crx` 拖入页面，点击「添加扩展程序」。
+2. 将下载的 `Bili-Mux-v1.1.3.crx` 拖入页面，点击「添加扩展程序」。
 3. 打开任意 B站视频页（需已登录），工具栏末尾出现粉色「保存」按钮即安装成功。
 
 一个 Manifest V3 Chrome 扩展，在 B站视频页注入下载面板，支持封面下载、DASH 音视频流分离保存、浏览器内 ffmpeg.wasm 合成 MP4、FLV 合并下载。
@@ -107,7 +107,6 @@ B站媒体 CDN（`bilivideo.com` 等）校验 Referer。`chrome.downloads` 发�
 | 权限 | 用途 |
 |------|------|
 | `downloads` | 调用 `chrome.downloads.download` 落地文件 |
-| `scripting` | 注入 content script |
 | `declarativeNetRequestWithHostAccess` | 注入 Referer 规则 |
 | `offscreen` | 创建 Offscreen Document 跑 ffmpeg.wasm |
 | `host_permissions`（bilibili.com / bilivideo.com / hdslb.com） | 携带登录态 fetch API + 拉取媒体流 |

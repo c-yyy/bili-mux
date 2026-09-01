@@ -58,8 +58,8 @@
 | 权限 | 用途说明 |
 |------|----------|
 | downloads | 将用户选择留存的视频、音频、封面文件保存至本地下载目录 |
-| scripting | 在 bilibili.com 视频页注入留存操作面板，供用户选择清晰度与留存方式 |
 | declarativeNetRequestWithHostAccess | 为 bilivideo.com 域的媒体请求注入 Referer 头，使媒体流可正常获取 |
+| content_scripts（声明式注入，无需 scripting 权限） | 在 bilibili.com 视频页 / 稍后再看等 /list/* 播放页注入留存操作面板，供用户选择清晰度与留存方式 |
 | offscreen | 创建 Offscreen Document 运行 ffmpeg.wasm，在后台完成音视频流封装 |
 | host_permissions: bilibili.com | 调用 B站 API 获取视频信息与播放地址（使用用户已有登录态） |
 | host_permissions: bilivideo.com | 获取媒体流数据用于本地留存 |
