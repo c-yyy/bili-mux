@@ -415,6 +415,76 @@ async function fetchStream(url, onProgress, stallMs = 60000) {
   }
 }
 
+/* ============================ 多节点容错（CDN 轮换） ============================ */
+// B站 playurl 对每条流返回 baseUrl + backupUrl（多个备用 CDN 节点）。
+// 早期实现只取 [0]，一旦主节点出问题（证书无效 / 连接失败 / 5xx / 传输停滞），
+// 整次下载就直接失败，用户只能干瞪眼。这里改为依次尝试全部节点。
+//
+// 需要说明的限制：fetch 失败时浏览器只抛 TypeError('Failed to fetch')，
+// JS 层面拿不到 ERR_CERT_DATE_INVALID 这类具体网络错误码（那属于 DevTools 展示层），
+// 因此只能按「网络层失败」统一归类，在文案里列出最常见的本地成因引导自查。
+function hostOf(u) {
+  try { return new URL(u).host; } catch (e) { return String(u).slice(0, 40); }
+}
+
+// 把底层网络错误翻译成人话；tried 为已尝试的节点数
+function netError(e, tried) {
+  const msg = (e && e.message) || '';
+  const suffix = tried > 1 ? `（已尝试 ${tried} 个 CDN 节点）` : '';
+  // Failed to fetch = TLS/连接层被浏览器拒绝（证书、代理、断网都会表现成这一句）
+  if (!msg || /Failed to fetch|NetworkError|network error|ERR_/i.test(msg)) {
+    return new Error(
+      `网络层失败${suffix}。所有节点都失败时通常是本地环境问题：` +
+      `① 系统日期时间不正确会让 HTTPS 证书校验通不过；` +
+      `② 安全软件或代理的 HTTPS 扫描证书未被浏览器信任`
+    );
+  }
+  return new Error(msg + suffix);
+}
+
+// 依次尝试每个节点拉取单条流；onRetry(attempt, total, host) 用于把换节点动作反馈到 UI
+async function fetchStreamWithFallback(urls, onProgress, stallMs = 60000, onRetry = null) {
+  const list = (urls || []).filter(Boolean);
+  if (!list.length) throw new Error('无可用直链');
+  let lastErr = null;
+  for (let i = 0; i < list.length; i++) {
+    if (i > 0) {
+      const node = hostOf(list[i]);
+      console.warn('[bili-mux] 上一节点失败，切换到备用节点', node, lastErr && lastErr.message);
+      if (onRetry) onRetry(i, list.length, node);
+    }
+    try {
+      return await fetchStream(list[i], onProgress, stallMs);
+    } catch (e) {
+      lastErr = e;
+      // 4xx = 签名过期 / 资源不存在，换节点结果一样，没必要继续试
+      if (/HTTP 4\d\d/.test(e.message || '')) throw e;
+    }
+  }
+  throw netError(lastErr, list.length);
+}
+
+// 同上，用于「分离保存」这类整体落地的场景
+async function downloadStreamWithFallback(urls, filename, onRetry = null) {
+  const list = (urls || []).filter(Boolean);
+  if (!list.length) throw new Error('无可用直链');
+  let lastErr = null;
+  for (let i = 0; i < list.length; i++) {
+    if (i > 0) {
+      const node = hostOf(list[i]);
+      console.warn('[bili-mux] 上一节点失败，切换到备用节点', node, lastErr && lastErr.message);
+      if (onRetry) onRetry(i, list.length, node);
+    }
+    try {
+      return await downloadStream(list[i], filename);
+    } catch (e) {
+      lastErr = e;
+      if (/HTTP 4\d\d/.test(e.message || '')) throw e;
+    }
+  }
+  throw netError(lastErr, list.length);
+}
+
 /* ============================ 面板 UI（Shadow DOM 隔离样式） ============================ */
 const STYLE = `
   :host { all: initial; }
@@ -866,18 +936,28 @@ function main() {
     });
     // FLV 分段（用于合并下载）：qn 拉到最高，拿到 durl 能提供的最佳画质
     try { flvData = await fetchPlayurl(bvid, cid, 0, 120); } catch (e) { flvData = null; }
+    // 诊断：打印实际拿到的 CDN 节点数。若恒为 1，说明 backupUrl 没解析出来，容错层会空转
+    try {
+      const vu = pickVideoUrls(), au = pickAudioUrls();
+      console.log('[bili-mux] 可用 CDN 节点 — 视频', vu.length, '个 / 音频', au.length,
+        '个\n  首选视频节点:', vu[0]);
+    } catch (e) { /* 解析异常不影响主流程 */ }
   }
 
   function pickVideoUrls() {
     const qn = Number(elQn.value);
     const list = dashData.dash.video || [];
     let pick = list.find(v => v.id === qn) || list[0];
-    return [pick.baseUrl, ...(pick.backupUrl || [])].filter(Boolean).map(toHttps);
+    // 兼容驼峰与下划线两套字段名：B站不同接口/不同时期返回的键名不一致，
+    // 只认一种会导致备用节点整个丢失（表现为「容错层空转，仍然一个节点打到黑」）
+    return [pick.baseUrl || pick.base_url, ...(pick.backupUrl || pick.backup_url || [])].filter(Boolean).map(toHttps);
   }
   function pickAudioUrls() {
     const list = dashData.dash.audio || [];
     let pick = list[0];
-    return [pick.baseUrl, ...(pick.backupUrl || [])].filter(Boolean).map(toHttps);
+    // 兼容驼峰与下划线两套字段名：B站不同接口/不同时期返回的键名不一致，
+    // 只认一种会导致备用节点整个丢失（表现为「容错层空转，仍然一个节点打到黑」）
+    return [pick.baseUrl || pick.base_url, ...(pick.backupUrl || pick.backup_url || [])].filter(Boolean).map(toHttps);
   }
 
   // 关闭卡片（右上角 ×）
@@ -894,10 +974,10 @@ function main() {
   // DASH 视频 / 音频 分别保存：两份独立 m4s，留给用户自行合成
   guarded($('btn-video'), async () => {
     if (!dashData) return setStatus('请先等待解析');
-    const url = pickVideoUrls()[0];
     setStatus('视频流下载中…');
     try {
-      await downloadStream(url, `${sanitize(viewData.title)}_${elQn.value}_video.m4s`);
+      await downloadStreamWithFallback(pickVideoUrls(), `${sanitize(viewData.title)}_${elQn.value}_video.m4s`,
+        (i, n, node) => setStatus(`主节点失败，切换备用节点 ${i + 1}/${n}（${node}）…`));
       setStatus('视频流已保存（.m4s）— 可在下载目录用本地 ffmpeg 合成');
     } catch (e) {
       setStatus('视频流下载失败: ' + (e && e.message) + '（可改用 FLV 合并或浏览器内合成）');
@@ -907,7 +987,8 @@ function main() {
     if (!dashData) return setStatus('请先等待解析');
     setStatus('音频流下载中…');
     try {
-      await downloadStream(pickAudioUrls()[0], `${sanitize(viewData.title)}_audio.m4s`);
+      await downloadStreamWithFallback(pickAudioUrls(), `${sanitize(viewData.title)}_audio.m4s`,
+        (i, n, node) => setStatus(`主节点失败，切换备用节点 ${i + 1}/${n}（${node}）…`));
       setStatus('音频流已保存（.m4s）— 可在下载目录用本地 ffmpeg 合成');
     } catch (e) {
       setStatus('音频流下载失败: ' + (e && e.message) + '（可改用 FLV 合并或浏览器内合成）');
@@ -939,10 +1020,12 @@ function main() {
     try {
       // 顺序拉取：先视频（进度 0→50%），再音频（50%→100%），不并行
       console.log('[bili-mux] mux: 开始拉取视频流', String(pickVideoUrls()[0]).slice(0, 60) + '…');
-      vBuf = await fetchStream(pickVideoUrls()[0], fetchStatus('拉取视频流', 0, 0.5));
+      vBuf = await fetchStreamWithFallback(pickVideoUrls(), fetchStatus('拉取视频流', 0, 0.5), 60000,
+        (i, n, node) => setStatus(`视频流主节点失败，切换备用节点 ${i + 1}/${n}（${node}）…`));
       console.log('[bili-mux] mux: 视频流拉取完成', mb(vBuf.byteLength));
       console.log('[bili-mux] mux: 开始拉取音频流', String(pickAudioUrls()[0]).slice(0, 60) + '…');
-      aBuf = await fetchStream(pickAudioUrls()[0], fetchStatus('拉取音频流', 0.5, 0.5));
+      aBuf = await fetchStreamWithFallback(pickAudioUrls(), fetchStatus('拉取音频流', 0.5, 0.5), 60000,
+        (i, n, node) => setStatus(`音频流主节点失败，切换备用节点 ${i + 1}/${n}（${node}）…`));
       console.log('[bili-mux] mux: 音频流拉取完成', mb(aBuf.byteLength));
     } catch (e) {
       // 拉流失败：给出明确提示，不进入等待、不乱回退，避免按钮卡死
