@@ -6,19 +6,21 @@
 
 ## Download Extension
 
-[⬇️ Download Bili-Mux v1.1.3 (.crx)](https://github.com/c-yyy/bili-mux/raw/main/Bili-Mux-v1.1.3.crx)
+[⬇️ Download Bili-Mux v1.2.0 (.crx)](https://github.com/c-yyy/bili-mux/raw/main/Bili-Mux-v1.2.0.crx)
 
 📄 [Privacy Policy](https://c-yyy.github.io/bili-mux/privacy.html)
 
 ### Installation
 
 1. Open Chrome, enter `chrome://extensions/` in the address bar and enable "Developer mode" (top right).
-2. Drag the downloaded `Bili-Mux-v1.1.3.crx` onto the page and click "Add extension".
+2. Drag the downloaded `Bili-Mux-v1.2.0.crx` onto the page and click "Add extension".
 3. Open any Bilibili video page (logged in) — a pink "Save" button at the end of the toolbar means it's installed.
 
 A Manifest V3 Chrome extension that injects a download panel into Bilibili video pages, supporting cover download, DASH audio/video stream saving, in-browser ffmpeg.wasm MP4 muxing, FLV merge download.
 
-**Supported pages**: regular video pages `/video/BVxxx` and `/video/av123`, plus "Watch later" / Favorites / Playlist pages under `/list/*` (there the video ID lives in the URL query, and switching to the next item re-parses automatically).
+**Supported pages**: regular video pages `/video/BVxxx` and `/video/av123`, "Watch later" / Favorites / Playlist pages under `/list/*` (there the video ID lives in the URL query, and switching to the next item re-parses automatically), **Anime / PGC pages** `/bangumi/play/ss109700`, `/bangumi/play/ep321808`, and **Course pages** `/cheese/play/ss20821`, `/cheese/play/ep712007`.
+
+> Anime uses the PGC API chain (`pgc/view/web/season` + `pgc/player/web/v2/playurl`); courses use PUGV. Both gain an "Episodes / Lessons" picker. **Members-only episodes and paid lessons require an account that actually has the entitlement** — the downloader can only fetch the stream your account can play.
 
 > **For personal learning and archival use only. Do not use for mass ripping or redistribution.**
 
@@ -111,6 +113,33 @@ Each mux request carries a unique `requestId`. `background.js` maintains a `requ
 | `declarativeNetRequestWithHostAccess` | Inject Referer rules |
 | `offscreen` | Create Offscreen Document for ffmpeg.wasm |
 | `host_permissions` (bilibili.com / bilivideo.com / hdslb.com) | Authenticated API fetch + media stream retrieval |
+
+## Changelog
+
+### v1.2.0 (2026-09-08)
+
+- **Anime / PGC support**: `/bangumi/play/ss*` and `/ep*` go through the PGC API chain, with an "Episodes" picker; members-only (`-10403`), preview-only (`PLAY_PREVIEW`) and rate-limit cases show clear messages
+- **Course support**: `/cheese/play/*` goes through the PUGV API chain, with a "Lessons" picker; unpaid courses show a "purchase required" message (distinct from "premium required")
+- **CDN failover**: fixed "primary CDN node failure kills the whole download" — now falls back across backup nodes (network error / 5xx / stall → next node; 4xx → abort)
+- **Toolbar button alignment**: clones sibling styling and does runtime geometry correction so the button sits flush with like/coin/favorite; removed hover border/animation effects (color change only)
+- **Quality & filename polish**: quality dropdown shows name, resolution and bitrate; download filenames follow `Title_Quality_VideoID` (anime/courses carry the `ep` id); fixed HDR being wrongly picked as default
+- Fixed a subtle bug where SPA episode/page switching on `/list/*` and anime pages didn't re-parse
+
+### v1.1.3
+
+- Removed the unused `scripting` permission and redundant `host_permissions` (in response to a Chrome Web Store rejection)
+
+### v1.1.2
+
+- `av` ID resolution (converted to BV via the view API and cached); automatic WBI re-sign on failure and 412 rate-limit fallback; CDN URL `http→https` upgrade
+
+### v1.1.1
+
+- Toolbar button label changed from "Download" to "Save"
+
+### v1.1.0
+
+- Initial release: cover download, separate DASH audio/video saving, in-browser ffmpeg.wasm MP4 muxing, FLV merge download, real-time resource usage
 
 ## Disclaimer
 

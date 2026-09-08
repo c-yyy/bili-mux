@@ -6,19 +6,21 @@
 
 ## 下载插件
 
-[⬇️ 下载 Bili-Mux v1.1.3（.crx）](https://github.com/c-yyy/bili-mux/raw/main/Bili-Mux-v1.1.3.crx)
+[⬇️ 下载 Bili-Mux v1.2.0（.crx）](https://github.com/c-yyy/bili-mux/raw/main/Bili-Mux-v1.2.0.crx)
 
 📄 [隐私政策](https://c-yyy.github.io/bili-mux/privacy.html)
 
 ### 安装教程
 
 1. 打开 Chrome，地址栏输入 `chrome://extensions/` 并开启右上角「开发者模式」。
-2. 将下载的 `Bili-Mux-v1.1.3.crx` 拖入页面，点击「添加扩展程序」。
+2. 将下载的 `Bili-Mux-v1.2.0.crx` 拖入页面，点击「添加扩展程序」。
 3. 打开任意 B站视频页（需已登录），工具栏末尾出现粉色「保存」按钮即安装成功。
 
 一个 Manifest V3 Chrome 扩展，在 B站视频页注入下载面板，支持封面下载、DASH 音视频流分离保存、浏览器内 ffmpeg.wasm 合成 MP4、FLV 合并下载。
 
-**支持的页面**：普通视频页 `/video/BVxxx`、`/video/av123`，以及「稍后再看」/「收藏夹」/「播单」等 `/list/*` 播放页（这类页面的视频 ID 在 URL 参数里，切换下一集时会自动重新解析）。
+**支持的页面**：普通视频页 `/video/BVxxx`、`/video/av123`，「稍后再看」/「收藏夹」/「播单」等 `/list/*` 播放页（这类页面的视频 ID 在 URL 参数里，切换下一集时会自动重新解析），**番剧/影视页** `/bangumi/play/ss109700`、`/bangumi/play/ep321808`，以及**课程页** `/cheese/play/ss20821`、`/cheese/play/ep712007`。
+
+> 番剧走 PGC 接口（`pgc/view/web/season` + `pgc/player/web/v2/playurl`），课程走 PUGV 接口，二者面板都会多出一个「选集 / 课程目录」下拉。**会员专享剧集、付费课程都需要账号本身有对应权益**，下载器只能拿到当前账号能播放的那一路。
 
 > **仅供个人学习留存使用，请勿用于批量搬运或二次分发。**
 
@@ -32,7 +34,8 @@
 | DASH 视频流 | 视频流 `.m4s` 单独保存（可选画质至 4K） |
 | DASH 音频流 | 音频流 `.m4s` 单独保存 |
 | 浏览器内合成 MP4 | 拉取音视频流后用 ffmpeg.wasm（Offscreen Document）封装为单个 MP4，无需本机安装 ffmpeg |
-| FLV 合并下载 | 旧版 HTTP-FLV 分段二进制拼接，低码率、体积小 |
+| FLV 合并下载 | 旧版 HTTP-FLV 分段二进制拼接，低码率、体积小（番剧一般不提供，此时该按钮会自动隐藏） |
+| 番剧选集 | 番剧页列出全部剧集，下拉切换后自动重新取该集直链 |
 | 实时资源占用 | 面板显示本扩展内存占用与网络下载速率 |
 
 ## 安装
@@ -110,6 +113,33 @@ B站媒体 CDN（`bilivideo.com` 等）校验 Referer。`chrome.downloads` 发�
 | `declarativeNetRequestWithHostAccess` | 注入 Referer 规则 |
 | `offscreen` | 创建 Offscreen Document 跑 ffmpeg.wasm |
 | `host_permissions`（bilibili.com / bilivideo.com / hdslb.com） | 携带登录态 fetch API + 拉取媒体流 |
+
+## 更新日志
+
+### v1.2.0（2026-09-08）
+
+- **新增番剧 / 影视支持**：`/bangumi/play/ss*`、`/ep*` 走 PGC 接口链，面板新增「选集」下拉；会员专享（`-10403`）、试看片段（`PLAY_PREVIEW`）、风控等给出明确提示
+- **新增课程支持**：`/cheese/play/*` 走 PUGV 接口链，面板显示「课程目录」；未购买课程给出「需购买」而非「大会员」提示
+- **CDN 节点轮换容错**：修复主 CDN 节点故障即整次下载失败的问题，依次尝试备用节点（网络层错误 / 5xx / 超时换节点，4xx 立即放弃）
+- **工具栏按钮对齐优化**：克隆参考元素样式 + 运行时几何校正，与点赞/投币/收藏同排等高；移除悬停边框与动画特效，仅保留变色
+- **清晰度与文件名优化**：下拉选项显示清晰度名、分辨率、码率；下载文件名统一为「标题_清晰度_视频ID」格式（番剧/课程带上 `ep` 号）；修复 HDR 档被误设为默认的问题
+- 修复 `/list/*` 播放页与番剧页 SPA 切集时面板不重新解析的隐蔽 bug
+
+### v1.1.3
+
+- 移除未使用的 `scripting` 权限、清理冗余 `host_permissions`（应对 Chrome 商店审核驳回）
+
+### v1.1.2
+
+- 支持 `av` 号解析（经 view 接口转 BV 并缓存）；WBI 签名失败自动重试与 412 风控降级；CDN 直链 `http→https` 升级
+
+### v1.1.1
+
+- 工具栏按钮文案「下载」→「保存」
+
+### v1.1.0
+
+- 首个发布版本：封面下载、DASH 音视频分离保存、浏览器内 ffmpeg.wasm 合成 MP4、FLV 合并下载、实时资源占用
 
 ## 免责声明
 

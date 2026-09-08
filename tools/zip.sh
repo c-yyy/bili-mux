@@ -18,8 +18,20 @@ cp lib/ffmpeg/* "$STAGE/lib/ffmpeg/"
 cp icons/icon16.png icons/icon48.png icons/icon128.png "$STAGE/icons/"
 
 rm -f "$OUT"
-# 在 STAGE 内打包，确保 zip 顶层就是扩展文件，不夹带目录层级
-(cd "$STAGE" && zip -r -X "../$OUT" . -x ".*") >/dev/null
+# 在 STAGE 内打包，确保 zip 顶层就是扩展文件，不夹带目录层级。
+# Windows 环境没有 zip 命令，改用 python 标准库 zipfile（-x ".*" 等价：跳过隐藏文件/目录）。
+python - "$STAGE" "$OUT" <<'PY'
+import zipfile, os, sys
+stage, out = sys.argv[1], sys.argv[2]
+with zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED) as z:
+    for root, dirs, files in os.walk(stage):
+        dirs[:] = [d for d in dirs if not d.startswith('.')]
+        for name in files:
+            if name.startswith('.'):
+                continue
+            full = os.path.join(root, name)
+            z.write(full, os.path.relpath(full, stage))
+PY
 rm -rf "$STAGE"
 
 echo "zip 完成: $(ls -lh "$OUT" | awk '{print $5, $9}')"

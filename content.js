@@ -1,13 +1,24 @@
-// content.js — 注入到 B站视频页
+// content.js — 注入到 B站播放页（普通视频 / 番剧）
 // 运行在 content script 隔离世界，但通过宿主页面的 cookie 罐 + manifest 的
 // host_permissions，可以直接带着登录态 fetch api.bilibili.com，从而绕开 CORS。
 //
-// 流程：
-//   1. 从 URL 取 bvid
-//   2. 调 view 接口拿 cid / 封面 pic / 分P pages / 标题 title
-//   3. 调 nav 接口拿 wbi 密钥 → 给 playurl 请求签名
-//   4. 调 playurl 拿 DASH 直链(video/audio 分离) 与 FLV 分段(durl)
-//   5. 面板里提供：封面下载 / 视频流+音频流分别保存 / FLV 合并 / 浏览器内合成 MP4
+// 两类页面走两条不同的链路，元信息与取流接口都不一样：
+//   UGC（/video/*、/list/*）
+//     1. 从 URL 取 bvid
+//     2. 调 view 接口拿 cid / 封面 pic / 分P pages / 标题 title
+//     3. 调 nav 接口拿 wbi 密钥 → 给 playurl 请求签名
+//     4. 调 /x/player/wbi/playurl 拿 DASH 直链与 FLV 分段(durl)
+//   PGC（番剧 /bangumi/play/ss* 或 ep*）
+//     1. 从 URL 取 season_id / ep_id
+//     2. 调 /pgc/view/web/season 拿剧集列表（注意成功体是 result 不是 data）
+//     3. 调 /pgc/player/web/v2/playurl 拿 DASH 直链（注意在 result.video_info.dash）
+//   PUGV（课程 /cheese/play/ss* 或 ep*）—— 与番剧同族，但三处不一样
+//     1. 元信息 /pugv/view/web/season → 成功体是 data
+//     2. 取流 /pugv/player/web/playurl，且必须显式带 avid + cid，只给 ep_id 会报参数错误
+//     3. 返回的 dash 直接在最外层，没有 video_info 这一层
+//     三条链路最终都归一化成 { dash: { video, audio } }，下游 UI 与下载逻辑共用。
+//
+// 5. 面板里提供：选集(PGC) / 封面下载 / 视频流+音频流分别保存 / FLV 合并 / 浏览器内合成 MP4
 //
 // 封面：view.data.pic 是 i0.hdslb.com 静态直链，无 wbi 签名、无防盗链鉴权，
 //       chrome.downloads 直接下即可——这是整个项目里最简单的一环。
@@ -117,8 +128,25 @@ function sanitize(name) {
 
 /* ============================ 清晰度标签 ============================ */
 const QN_LABEL = {
-  127: '超清 8K', 120: '4K', 116: '1080P60/高码率', 112: '1080P+',
-  80: '1080P', 74: '720P60', 64: '720P', 48: '720P', 32: '480P', 16: '360P'
+  127: '超清 8K', 126: '杜比视界', 125: 'HDR', 120: '4K',
+  116: '1080P60/高码率', 112: '1080P+',
+  80: '1080P', 74: '720P60', 64: '720P', 48: '720P', 32: '480P', 16: '360P', 6: '240P 极速'
+};
+
+// 这几档不作为默认选中项，但仍列在下拉里供手动选择：
+//   HDR / 杜比视界：色域与传输函数不同，拷进普通 MP4 后在 SDR 屏上会明显偏色发灰；
+//   8K：体积过大，多数播放器与设备扛不住。
+// 之前默认落在 125 上，就是因为下拉按接口返回顺序排、且这几档没被排除。
+const QN_NOT_DEFAULT = [125, 126, 127];
+// 下拉选项上的附加说明：这几档能用，但多数人的设备/播放器看不出效果甚至更差
+const QN_NOTE = { 125: ' · 普通屏偏色', 126: ' · 需杜比视界设备', 127: ' · 体积极大' };
+
+// 文件名用的短标签。QN_LABEL 里含「/」等非法文件名字符（例如 1080P60/高码率），
+// 直接拼进文件名会被 sanitize 替换成下划线，这里另备一份干净的写法。
+const QN_FILE_TAG = {
+  127: '8K', 126: 'DolbyVision', 125: 'HDR', 120: '4K',
+  116: '1080P60', 112: '1080PPlus',
+  80: '1080P', 74: '720P60', 64: '720P', 48: '720P', 32: '480P', 16: '360P', 6: '240P'
 };
 
 /* ============================ 接口调用 ============================ */
@@ -191,6 +219,124 @@ async function fetchJson(url) {
 // hdslb/bilivideo CDN 均支持 HTTPS，统一升级避免控制台告警与升级失败。
 function toHttps(u) {
   return typeof u === 'string' ? u.replace(/^http:\/\//i, 'https://') : u;
+}
+
+/* ============================ PGC（番剧 / 影视）接口 ============================ */
+// 番剧走的是与 UGC 完全不同的一条链路，三处容易踩空的地方：
+//   ① 元信息：GET /pgc/view/web/season?season_id=|ep_id= —— 成功体是 result（不是 data）；
+//   ② 取流：  GET /pgc/player/web/v2/playurl —— v2 把老接口的 result 整体塞进了
+//              video_info，所以 DASH 在 result.video_info.dash 而非 result.dash；
+//   ③ 会员专享剧集返回 code = -10403（不会体现成 dash 缺失，必须单独翻译）。
+// 课程（/cheese/play/*）走的是 PUGV 分支，与番剧同族但字段名和端点都不同，见 fetchPgcSeason。
+// URL 形态：/bangumi/play/ss109700（整季入口）、/bangumi/play/ep321808（单集）、
+//          /cheese/play/ss20821（课程主页）、/cheese/play/ep712007（单课时）。
+function getPgcId() {
+  const m = location.pathname.match(/\/(bangumi|cheese)\/play\/(ss\d+|ep\d+)/i);
+  if (!m) return null;
+  const raw = m[2];
+  return {
+    site: /cheese/i.test(m[1]) ? 'pugv' : 'pgc',
+    kind: /^ss/i.test(raw) ? 'season_id' : 'ep_id',
+    id: raw.slice(2),
+    raw: raw
+  };
+}
+
+async function fetchPgcSeason(ref) {
+  const isPugv = ref.site === 'pugv';
+  // 番剧：/pgc/view/web/season → 成功体是 result
+  // 课程：/pugv/view/web/season → 成功体是 data（三处「顶层字段不一致」之一，别混用）
+  const base = isPugv
+    ? 'https://api.bilibili.com/pugv/view/web/season?'
+    : 'https://api.bilibili.com/pgc/view/web/season?';
+  const key = ref.kind === 'ep_id' ? 'ep_id' : 'season_id';
+  const j = await fetchJson(base + key + '=' + encodeURIComponent(ref.id));
+  if (j.code !== 0) {
+    const map = {
+      '-400': '请求参数错误', '-403': '无访问权限（请先登录）',
+      '-404': isPugv ? '课程不存在或未购买' : '番剧不存在或无权限（可能需登录 / 该地区不可观看）',
+      '-412': '请求被风控拦截', '-352': '风控校验失败'
+    };
+    throw new Error('season 接口错误(' + j.code + '): ' + (map[String(j.code)] || j.message));
+  }
+  return j.result || j.data || {};
+}
+
+// 剧集列表在不同页面类型下埋在三层不同结构里：顶层 episodes、sections[].episodes、
+// 以及新版 modules[].data.episodes（含 modules[].data.sections[].episodes）。
+// 只认一种会表现为「番剧页里选集是空的」，所以全收一遍再按 ep_id 去重。
+function flatEpisodes(season) {
+  const out = [];
+  const push = (e) => {
+    if (!e) return;
+    // 部分新版 modules 结构里剧集主键叫 ep_id，统一补成 id，后续各处只用 id
+    if (e.id == null && e.ep_id != null) e.id = e.ep_id;
+    if (e.id != null) out.push(e);
+  };
+  (season.episodes || []).forEach(push);
+  (season.sections || []).forEach((s) => (s.episodes || []).forEach(push));
+  (season.modules || []).forEach((m) => {
+    const d = m.data || {};
+    (d.episodes || []).forEach(push);
+    (d.sections || []).forEach((s) => (s.episodes || []).forEach(push));
+  });
+  const seen = new Set();
+  return out.filter((e) => (seen.has(e.id) ? false : (seen.add(e.id), true)));
+}
+
+function pgcPlayurlError(j, site) {
+  const c = String(j.code);
+  const map = {
+    // 同一个码在两条业务线里含义不同：番剧是大会员，课程是没买课
+    '-10403': site === 'pugv' ? '该课时需要购买课程后才能观看' : '该集需要大会员权益（或尚未登录）',
+    '-404': site === 'pugv' ? '课时不存在或未购买' : '剧集不存在或无权限（可能需登录 / 该地区不可观看）',
+    '-403': '接口鉴权失败，请刷新页面后重试',
+    '-400': '请求参数错误', '-412': '请求被风控拦截', '-352': '风控校验失败'
+  };
+  return (map[c] || j.message || '未知错误') + '（code ' + c + '）';
+}
+
+async function fetchPgcPlayurl(ep, seasonId, fnval, qn, site) {
+  const params = { ep_id: ep.id, qn, fnval, fnver: 0, fourk: 1 };
+  // 课程（PUGV）的取流接口必须显式带 avid + cid，只给 ep_id 会报参数错误
+  if (site === 'pugv') {
+    if (ep.aid) params.avid = ep.aid;
+    if (ep.cid) params.cid = ep.cid;
+  } else if (seasonId) {
+    params.season_id = seasonId;
+  }
+  // 番剧用 v2 端点；课程只有 /pugv/player/web/playurl 这一个
+  const root = site === 'pugv'
+    ? 'https://api.bilibili.com/pugv/player/web/playurl?'
+    : 'https://api.bilibili.com/pgc/player/web/v2/playurl?';
+  const build = (p) => root + p;
+  let j = null, lastErr = null;
+  // PGC 取流是否强制 WBI 签名一直在变（yt-dlp 目前不带签名，部分客户端带），
+  // 因此先按无签名打一次，失败再补带签名重试——两种口径都覆盖，不必跟着接口轮换返工。
+  try { j = await fetchJson(build(new URLSearchParams(params))); } catch (e) { lastErr = e; }
+  if (!j || j.code !== 0) {
+    try {
+      const mixinKey = await getMixinKey();
+      const r = await fetchJson(build(signWbi(params, mixinKey)));
+      if (r && r.code === 0) return r.result || {};
+      if (r) j = r;
+    } catch (e) { lastErr = e; }
+  }
+  if (!j) throw lastErr || new Error((site === 'pugv' ? 'pugv' : 'pgc') + ' playurl 请求失败');
+  if (j.code !== 0) throw new Error(pgcPlayurlError(j, site));
+  return j.result || j.data || {};
+}
+
+// 文件名标题：番剧的 episodes[].title 通常是「5」这种纯数字串（集数），
+// long_title 是副标题；但课程的 title 本身就是小节名，不能拼成「第XXX集」。
+function pgcEpTitle(season, ep, list) {
+  const name = season.title || season.season_title || '番剧';
+  const long = (ep.long_title || ep.longTitle || '').trim();
+  const t = String(ep.title == null ? '' : ep.title).trim();
+  if (list.length <= 1) return name + (long ? ' ' + long : '');
+  const num = /^\d+$/.test(t) ? '第' + t + '集' : (t || '?');
+  const sub = long && long !== t ? long : '';
+  return name + ' - ' + num + (sub ? ' ' + sub : '');
 }
 
 async function fetchView(bvid) {
@@ -556,7 +702,7 @@ const STYLE = `
 `;
 
 // 自有图标：粉色下载箭头（与扩展图标同款设计，站内工具栏里以粉色描边区别于 B站灰标）
-const ICON_SVG = `<svg viewBox="0 0 1024 1024" width="20" height="20" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M832 448h-192V0H384v448H192v64l320 320 320-320V448zM896 896H128v128h768v-128z" fill="#fb7299"/></svg>`;
+const ICON_SVG = `<svg viewBox="0 0 1024 1024" width="20" height="20" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M832 448h-192V0H384v448H192v64l320 320 320-320V448zM896 896H128v128h768v-128z" fill="currentColor"/></svg>`;
 
 // 重试/刷新图标（解析失败时显示在状态文字旁）
 const REFRESH_SVG = `<svg viewBox="0 0 1024 1024" width="18" height="18" xmlns="http://www.w3.org/2000/svg"><path d="M369.777778 160.568889a42.666667 42.666667 0 0 1-42.666667 42.666667H128a42.666667 42.666667 0 1 1 0-85.333334h199.111111a42.666667 42.666667 0 0 1 42.666667 42.666667" fill="#fb7299"/><path d="M327.111111 402.346667a42.666667 42.666667 0 0 1-42.666667-42.666667v-199.111111a42.666667 42.666667 0 1 1 85.333334 0v199.111111a42.666667 42.666667 0 0 1-42.666667 42.666667" fill="#fb7299"/><path d="M512.014222 938.652444h-0.753778a424.533333 424.533333 0 0 1-294.272-124.913777c-80.583111-80.583111-124.956444-187.733333-124.956444-301.696 0-113.976889 44.373333-221.112889 124.970667-301.696l73.088-73.116445a42.680889 42.680889 0 0 1 60.359111 60.344889l-73.102222 73.102222a339.057778 339.057778 0 0 0-99.982223 241.351111A339.128889 339.128889 0 0 0 277.333333 753.422222a339.640889 339.640889 0 0 0 235.406223 99.911111 42.680889 42.680889 0 0 1-0.725334 85.333334M654.222222 863.473778v-0.014222a42.666667 42.666667 0 0 1 42.666667-42.666667h199.111111a42.666667 42.666667 0 0 1 0 85.333333H696.888889a42.666667 42.666667 0 0 1-42.666667-42.666666" fill="#fb7299"/><path d="M696.888889 621.681778a42.666667 42.666667 0 0 1 42.666667 42.666666v199.111112a42.666667 42.666667 0 0 1-85.333334 0v-199.111112a42.666667 42.666667 0 0 1 42.666667-42.666666" fill="#fb7299"/><path d="M703.715556 899.285333a42.638222 42.638222 0 0 1-30.165334-72.832l73.130667-73.102222c133.077333-133.091556 133.077333-349.653333 0-482.730667A339.100444 339.100444 0 0 0 505.315556 170.666667a42.666667 42.666667 0 1 1 0-85.333334c113.976889 0 221.112889 44.387556 301.681777 124.970667 166.357333 166.343111 166.357333 436.387556 0 602.730666l-73.130667 73.102223a42.638222 42.638222 0 0 1-30.15111 8.148444z" fill="#fb7299"/></svg>`;
@@ -571,10 +717,14 @@ function buildPanel(host) {
       </div>
       <div class="subtitle" id="subtitle"></div>
       <img class="cover" id="cover" alt="封面"/>
+      <div class="pages" id="epbox">
+        <label id="ep-label" style="display:block;font-weight:600;margin-bottom:4px;">选集</label>
+        <select id="ep-sel"></select>
+      </div>
       <div class="row">
         <button class="act primary" id="btn-cover">下载封面</button>
       </div>
-      <div class="row">
+      <div class="row" id="row-flvm">
         <button class="act" id="btn-flvm">兼容下载（低码率）</button>
       </div>
       <div class="flvbox" id="flvbox">
@@ -603,7 +753,7 @@ function buildPanel(host) {
       <div class="fmt-help"><b>兼容下载</b>：HTTP-FLV 流，音视频单文件封装，码率低、体积小、下载快，成功率极高。<br><b>高级下载</b>：DASH 流，音视频分离，支持原画及 4K 高码率，有小概率失败。</div>
       <div class="panel-footer">
         <div class="footer-left"><img class="footer-logo" id="footer-logo" alt="Bili-Mux"/><span class="footer-name">哔哩喵</span></div>
-        <div class="footer-right"><span class="ver" id="panel-ver">v1.1.3</span>
+        <div class="footer-right"><span class="ver" id="panel-ver">v1.2.0</span>
         <a href="https://github.com/c-yyy/bili-mux" target="_blank" rel="noopener" title="GitHub 仓库" aria-label="GitHub 仓库"><svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.26 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg></a></div>
       </div>
     </div>`;
@@ -617,22 +767,29 @@ function injectToolbarStyle() {
   const style = document.createElement('style');
   style.id = 'bili-mux-style';
   style.textContent = `
+    /* 注入的工具栏项：只保留「与兄弟元素一致的静态外观 + 悬停变色」，
+       不做边框、背景、位移、缩放、浮动阴影等任何悬浮期特效——那些会让它看起来
+       不像原生工具栏的一部分（视频页 / 番剧页 / 课程页一律如此）。 */
     .bili-mux-item { display: inline-flex !important; align-items: center; gap: 4px;
       box-sizing: border-box; user-select: none; cursor: pointer;
-      border: 2px solid transparent; border-radius: 6px; background: transparent;
-      transition: transform .18s ease, filter .18s ease, border-color .18s ease, background .18s ease; }
+      vertical-align: middle; border: 0; background: transparent; }
     .bili-mux-item svg { width: 20px; height: 20px; display: block; flex: none; }
-    .bili-mux-item .bili-mux-label { font-size: 13px; line-height: 1; color: #fb7299; }
+    .bili-mux-item .bili-mux-label { font-size: 13px; line-height: 1; }
     .bili-mux-item:hover { color: #fb7299 !important;
-      transform: translateY(-2px) scale(1.06);
-      filter: drop-shadow(0 3px 5px rgba(251,114,153,.45));
-      border-color: #fb7299; background: rgba(251,114,153,.12); }
-    .bili-mux-item:hover svg { animation: bili-mux-bob .85s ease-in-out infinite; }
-    @keyframes bili-mux-bob {
-      0% { transform: translateY(-2px); }
-      60% { transform: translateY(3px); }
-      100% { transform: translateY(-2px); }
-    }
+      border: 0 !important; background: transparent !important;
+      transform: none !important; filter: none !important; box-shadow: none !important; }
+    .bili-mux-item:hover svg { animation: none !important; }
+
+    /* 兜底悬浮按钮：番剧页结构与视频页不同，所有工具栏选择器都没命中时用它，
+       保证「保存」入口一定存在（固定在播放器右上角，避开站顶导航）。
+       它浮在画面之上、没有兄弟元素可对齐，所以保留静态描边作为视觉边界
+       （上面的 :hover 会清掉 .bili-mux-item 的边框，这里用更高优先级还原）。 */
+    .bili-mux-float { position: fixed; right: 20px; top: 76px; z-index: 2147483000;
+      background: #fff; border: 2px solid #000; border-radius: 8px; padding: 6px 10px;
+      box-shadow: 3px 3px 0 #000; }
+    .bili-mux-float:hover { border: 2px solid #fb7299 !important; background: #fff !important;
+      box-shadow: 3px 3px 0 #fb7299 !important; }
+    .bili-mux-float .bili-mux-label { color: #fb7299; }
   `;
   document.head.appendChild(style);
 }
@@ -643,7 +800,10 @@ const TOOLBAR_SELECTORS = [
   '.video-toolbar-left-main',
   '.video-toolbar-left',
   '[class*="toolbar-left-main"]',
-  '[class*="toolbar-left"]'
+  '[class*="toolbar-left"]',
+  '.toolbar-left',                 // 番剧页（/bangumi/play/*）的容器，class 上没有 video- 前缀
+  '[class*="bangumi-toolbar"]',    // 番剧页另一套命名
+  '.video-info-actions'
 ];
 function findToolbar() {
   for (const sel of TOOLBAR_SELECTORS) {
@@ -653,29 +813,17 @@ function findToolbar() {
   return null;
 }
 
-function injectToggle(togglePanel) {
-  const toolbar = findToolbar();
-  if (!toolbar) return false;
-  if (document.getElementById('bili-mux-toggle')) return true;
-
-  const btn = document.createElement('div');
-  btn.id = 'bili-mux-toggle';
-  btn.className = 'bili-mux-item';
+// 构造统一的触发按钮（工具栏内嵌版与浮动兜底版共用）
+function makeToggleBtn(id, extraClass, togglePanel) {
+  // 用 span 而不是 div：番剧页 / 课程页的工具栏是 inline-flex 布局，塞一个块级 div
+  // 会被撑成整行、破坏兄弟元素（点赞/投币/收藏）的排列。span 配合 .bili-mux-item
+  // 的 display:inline-flex 才能与它们同排且等高。
+  const btn = document.createElement('span');
+  btn.id = id;
+  btn.className = 'bili-mux-item' + (extraClass ? ' ' + extraClass : '');
   btn.setAttribute('role', 'button');
   btn.setAttribute('title', '哔哩喵 (Bili-Mux)');
   btn.innerHTML = ICON_SVG + '<span class="bili-mux-label">保存</span>';
-
-  // 克隆容器里第一个元素的 computed style，让本按钮与兄弟元素同字体/颜色/间距
-  // （cursor 除外：克隆来的 default 会盖掉手型光标，这里强制 pointer）
-  const ref = toolbar.children[0];
-  if (ref) {
-    const cs = getComputedStyle(ref);
-    ['color', 'fontFamily', 'fontSize', 'fontWeight', 'lineHeight', 'letterSpacing',
-     'padding', 'paddingLeft', 'paddingRight', 'paddingTop', 'paddingBottom',
-     'margin', 'textAlign'].forEach((p) => { if (cs[p]) btn.style[p] = cs[p]; });
-  }
-  // 覆盖克隆来的内边距：给带边框/背景的悬停态留出内部呼吸空间（inline 优先于 CSS）
-  btn.style.padding = '5px 9px';
   btn.style.cursor = 'pointer';
   let _toggleLast = 0;
   btn.addEventListener('click', (e) => {
@@ -686,7 +834,83 @@ function injectToggle(togglePanel) {
     _toggleLast = now;
     togglePanel();
   });
+  return btn;
+}
+
+// 当前生效的触发按钮：优先工具栏内的，其次浮动兜底的
+function toggleEl() {
+  return document.getElementById('bili-mux-toggle') || document.getElementById('bili-mux-float');
+}
+
+// 参考元素：工具栏里第一个真正可见、有实际尺寸的兄弟节点。
+// 它的 computed style 就是当前页面「工具栏项」的标准样式——视频页 / 番剧页 / 课程页
+// 三者各不相同，照着它克隆比维护一套常量靠谱。
+function pickRefEl(toolbar) {
+  for (const el of Array.from(toolbar.children)) {
+    if (el.id === 'bili-mux-toggle' || el.id === 'bili-mux-float') continue;
+    const st = getComputedStyle(el);
+    if (st.display === 'none' || st.visibility === 'hidden') continue;
+    const r = el.getBoundingClientRect();
+    if (r.height > 8 && r.width > 4) return el;
+  }
+  return null;
+}
+
+// 运行时二���校正：样式克隆能覆盖大多数情况，但容器若不是 flex（此时 inline-flex 的
+// span 走的是行内基线排版，还会叠加行盒本身的偏移），纯 CSS 保证不了像素级对齐。
+// 这里直接量一次真实几何位置，用 margin-top 修正差值。
+// 多次调用是幂等的：每次都先复位 margin-top 再重测，不会累加。
+function alignToRef(btn, ref) {
+  const fix = () => {
+    if (!btn.isConnected || !ref || !ref.isConnected) return;
+    btn.style.marginTop = '';                       // 复位后测量，避免修正量累加
+    const rb = ref.getBoundingClientRect();
+    const bb = btn.getBoundingClientRect();
+    if (!rb.height || !bb.height) return;
+    const delta = (rb.top + rb.height / 2) - (bb.top + bb.height / 2);
+    if (Math.abs(delta) > 0.5) btn.style.marginTop = delta.toFixed(1) + 'px';
+  };
+  requestAnimationFrame(fix);
+  setTimeout(fix, 400);   // 图片/字体加载完成后布局可能二次变化
+  setTimeout(fix, 1500);  // SPA 延迟渲染的重排兜底
+}
+
+function injectToggle(togglePanel) {
+  const toolbar = findToolbar();
+  if (!toolbar) return false;
+  if (document.getElementById('bili-mux-toggle')) return true;
+
+  const btn = makeToggleBtn('bili-mux-toggle', '', togglePanel);
+
+  // 克隆参考元素的字体与颜色，让本按钮静态时与其它工具栏项完全一致
+  // （图标与文字都用 currentColor / 继承色，idle 灰、hover 粉，跟原生按钮一个行为）
+  const ref = pickRefEl(toolbar);
+  if (ref) {
+    const cs = getComputedStyle(ref);
+    ['color', 'fontFamily', 'fontSize', 'fontWeight', 'lineHeight', 'letterSpacing',
+     'borderRadius', 'whiteSpace'].forEach((p) => { if (cs[p]) btn.style[p] = cs[p]; });
+    const r = ref.getBoundingClientRect();
+    // 等高：内容由 .bili-mux-item 的 align-items:center 垂直居中，避免落到行基线导致下沉。
+    // 上限 64px 是防呆——万一参考元素命中了某个外层大容器，别把一个按钮拉成那么高。
+    if (r.height >= 8 && r.height <= 64) btn.style.height = Math.round(r.height) + 'px';
+    // 水平沿用参考元素的内边距与外边距（垂直归零交给上面的固定高度 + 内部居中），
+    // 这样既不会与相邻按钮挤在一起，行内的呼吸节奏也和它们一致
+    btn.style.padding = '0 ' + (parseFloat(cs.paddingRight) || 0) + 'px 0 ' + (parseFloat(cs.paddingLeft) || 0) + 'px';
+    btn.style.margin = '0 ' + (parseFloat(cs.marginRight) || 0) + 'px 0 ' + (parseFloat(cs.marginLeft) || 0) + 'px';
+  }
+  btn.style.flex = '0 0 auto';   // 不被挤压变形
+  btn.style.alignSelf = 'center';
+  btn.style.cursor = 'pointer';
   toolbar.appendChild(btn);
+  if (ref) alignToRef(btn, ref);
+  return true;
+}
+
+// 番剧页播放器工具栏的容器名与视频页不同；若上面所有选择器都落空（页面改版、AB 实验），
+// 退一步挂悬浮按钮，功能完全一致，只是钉在播放器右上角而不是插进工具栏。
+function injectFloat(togglePanel) {
+  if (document.getElementById('bili-mux-float')) return true;
+  (document.body || document.documentElement).appendChild(makeToggleBtn('bili-mux-float', 'bili-mux-float', togglePanel));
   return true;
 }
 
@@ -694,16 +918,18 @@ function injectToggle(togglePanel) {
 function observeToolbar(togglePanel) {
   injectToolbarStyle();
   if (!injectToggle(togglePanel)) {
+    let waited = 0;
     const iv = setInterval(() => {
-      if (injectToggle(togglePanel)) {
-        clearInterval(iv);
-      } else if (!findToolbar()) {
-        // 容器尚未出现，继续等待
-      }
+      waited += 1200;
+      if (injectToggle(togglePanel)) { clearInterval(iv); return; }
+      // 等 6s 仍找不到工具栏容器：改用悬浮按钮，避免页面上永远不出现入口
+      if (waited >= 6000) { clearInterval(iv); injectFloat(togglePanel); }
     }, 1200);
     setTimeout(() => clearInterval(iv), 30000);
   }
   const mo = new MutationObserver(() => {
+    // 已经挂了浮动按钮就不再争夺工具栏位置，免得页面上出现两个入口
+    if (document.getElementById('bili-mux-float')) return;
     if (!document.getElementById('bili-mux-toggle')) injectToggle(togglePanel);
   });
   mo.observe(document.documentElement, { childList: true, subtree: true });
@@ -714,8 +940,9 @@ function observeToolbar(togglePanel) {
 (function () {
 function main() {
   if (document.getElementById('bili-mux-host')) return; // 防止重复注入
-  let bvid = getBvid();
-  if (!bvid) return;
+  let pgcRef = getPgcId();          // 番剧/课程页：{ site, kind, id, raw }；普通视频页为 null
+  let bvid = pgcRef ? null : getBvid();
+  if (!bvid && !pgcRef) return;
 
   const host = document.createElement('div');
   host.id = 'bili-mux-host';
@@ -725,7 +952,7 @@ function main() {
   // 依据触发按钮（#bili-mux-toggle）的视口坐标，把面板放到其右侧、顶部平齐；
   // 若右侧放不下则翻到按钮左侧。面板为 fixed，正好吃 getBoundingClientRect 的视口坐标。
   function positionPanelToButton() {
-    const btn = document.getElementById('bili-mux-toggle');
+    const btn = toggleEl();
     if (!btn) return;
     const r = btn.getBoundingClientRect();
     const gap = 8;
@@ -750,7 +977,7 @@ function main() {
   document.addEventListener('click', (e) => {
     if (!panelEl.classList.contains('show')) return;
     const path = (e.composedPath && e.composedPath()) || [];
-    const toggle = document.getElementById('bili-mux-toggle');
+    const toggle = toggleEl();
     if (host && path.indexOf(host) !== -1) return;        // 点击面板内部
     if (toggle && path.indexOf(toggle) !== -1) return;    // 点击触发按钮
     closePanel();
@@ -771,13 +998,13 @@ function main() {
   const elTitle = $('title'), elCover = $('cover'), elQn = $('qn'),
     elStatus = $('status');
 
-  let viewData = null;     // view 接口结果
-  let dashData = null;     // playurl DASH 结果
+  let viewData = null;     // 当前这条播放项的元信息（UGC 用 view 接口结果；PGC 归一化为同构对象）
+  let pgcInfo = null;      // 番剧页专属：{ season, list, ep, seasonId }
+  let dashData = null;     // playurl DASH 结果（归一化后统一是 { dash: { video, audio } }）
   let flvData = null;      // playurl FLV 结果
   let _gen = 0;            // URL 变化世代号：防止快速切换时旧请求回写新数据
-  let _lastBvid = bvid;    // 上次解析的视频 ID
-  let _lastSearch = location.search; // 上次 URL query（含 ?p=）
-  const _ver = (chrome.runtime.getManifest && chrome.runtime.getManifest().version) || '1.1.3';
+  let _lastKey = (pgcRef ? pgcRef.raw : (bvid || '')) + '|' + location.search; // 上次 URL 标识（含 path 里的 ss/ep 与 query）
+  const _ver = (chrome.runtime.getManifest && chrome.runtime.getManifest().version) || '1.2.0';
   const elVer = $('panel-ver');
   if (elVer) elVer.textContent = 'v' + _ver;
   // 底部栏扩展图标（需 manifest web_accessible_resources 放行）
@@ -790,7 +1017,8 @@ function main() {
     'padding: 2px 6px; border-radius: 3px 0 0 3px; color: #fff; background: #fb7299; font-weight: bold;',
     'padding: 2px 6px; color: #fff; background: #FF9999; font-weight: bold;',
     'padding: 2px 6px; border-radius: 0 3px 3px 0; color: #fff; background: #4CAF50; font-weight: bold;');
-  console.log('[bili-mux] content script 注入成功，bvid =', bvid);
+  console.log('[bili-mux] content script 注入成功，',
+    pgcRef ? ((pgcRef.site === 'pugv' ? '课程 ' : '番剧 ') + pgcRef.raw) : ('bvid = ' + bvid));
 
   function setStatus(t) { elStatus.textContent = t || ''; }
 
@@ -862,21 +1090,27 @@ function main() {
     elCover.style.display = 'none';
     $('muxbox').style.display = 'none';
     $('flvbox').style.display = 'none';
+    $('row-flvm').style.display = '';
     setStatus('');
   }
 
   function onUrlChange() {
-    const newBvid = getBvid();
+    const newPgc = getPgcId();
+    const newBvid = newPgc ? null : getBvid();
     const newSearch = location.search;
-    if (newBvid === _lastBvid && newSearch === _lastSearch) return; // 无变化
-    _lastBvid = newBvid;
-    _lastSearch = newSearch;
-    if (!newBvid) {
-      // 离开视频页（例如回到首页）：不销毁面板 DOM，仅收起，等待下次进入视频页
+    // 番剧的集数藏在 path（ss/ep）里而不是 ?p=，因此把 path 里的 ID 一并计入变化键，
+    // 否则「点下一集」只会改 pathname、_lastBvid 不变，面板不会重新解析。
+    const newKey = (newPgc ? newPgc.raw : (newBvid || '')) + '|' + newSearch;
+    if (newKey === _lastKey) return; // 无变化
+    _lastKey = newKey;
+    if (!newPgc && !newBvid) {
+      // 离开视频/番剧页（例如回到首页）：不销毁面板 DOM，仅收起，等待下次进入
       closePanel();
       return;
     }
+    pgcRef = newPgc;
     bvid = newBvid;
+    if (!newPgc) pgcInfo = null; // 从番剧切回普通视频，清掉 PGC 上下文
     resetPanelForNewVideo();
     init();
   }
@@ -902,40 +1136,146 @@ function main() {
     const myGen = ++_gen; // 本次解析世代号；若期间发生 URL 变化，旧请求回写会被丢弃
     if (btnRetry) btnRetry.style.display = 'none';
     try {
-      viewData = await fetchView(bvid);
+      if (pgcRef) await initPgc(myGen);
+      else await initUgc(myGen);
       if (myGen !== _gen) return;
-      // view 会回传真实 BV 号，先入缓存：av 号链接下 playurl 可直接复用，不必再打一次 view
-      if (viewData && viewData.bvid) _avBvCache.set(bvid, viewData.bvid);
-      elTitle.textContent = viewData.title;
-      // 副标题：URL 中的视频 ID（BVID / 老格式 avid）+ 封面右键操作提示
-      $('subtitle').innerHTML = '<span class="id">' + bvid + '</span> <span class="hint">（封面图可右键复制或保存）</span>';
-      if (viewData.pic) {
-        elCover.src = toHttps(viewData.pic);
-        elCover.style.display = 'block';
-      }
-      // 默认拿当前分P（?p=）对应的 cid 的 playurl
-      await loadPlayurl(currentCid(viewData));
+      // UGC 默认拿当前分P（?p=）对应的 cid；PGC 的 cid 已在 applyPgcEp 里就绪
+      await loadPlayurl(pgcInfo ? viewData.cid : currentCid(viewData));
       if (myGen !== _gen) return;
     } catch (e) {
       if (myGen !== _gen) return; // 已被新导航取代，静默
       elTitle.textContent = '解析失败';
       setStatus(e.message);
       if (btnRetry) btnRetry.style.display = '';
+      console.error('[bili-mux] 解析失败:', e && e.message);
     }
   }
 
-  async function loadPlayurl(cid) {
-    dashData = await fetchPlayurl(bvid, cid, 16, 80); // DASH
-    // 填充清晰度下拉
+  // —— UGC（普通视频 / 稍后再看等 /list/* 页）——
+  async function initUgc(myGen) {
+    viewData = await fetchView(bvid);
+    if (myGen !== _gen) return;
+    // view 会回传真实 BV 号，先入缓存：av 号链接下 playurl 可直接复用，不必再打一次 view
+    if (viewData && viewData.bvid) _avBvCache.set(bvid, viewData.bvid);
+    elTitle.textContent = viewData.title;
+    // 副标题：URL 中的视频 ID（BVID / 老格式 avid）+ 封面右键操作提示
+    $('subtitle').innerHTML = '<span class="id">' + bvid + '</span> <span class="hint">（封面图可右键复制或保存）</span>';
+    if (viewData.pic) {
+      elCover.src = toHttps(viewData.pic);
+      elCover.style.display = 'block';
+    }
+    $('epbox').classList.remove('show'); // 选集下拉只给番剧页用
+    $('row-flvm').style.display = '';
+  }
+
+  // —— PGC（番剧 / 影视）——
+  async function initPgc(myGen) {
+    const season = await fetchPgcSeason(pgcRef);
+    if (myGen !== _gen) return;
+    const list = flatEpisodes(season);
+    if (!list.length) throw new Error('该剧集列表为空（可能需要登录，或该地区不可观看）');
+    // ss 入口没有指定具体某一集，默认第一集，用户可在「选集」下拉里切；
+    // ep 入口则精确定位到那一集。
+    let ep = null;
+    if (pgcRef.kind === 'ep_id') ep = list.find((e) => String(e.id) === String(pgcRef.id));
+    if (!ep) ep = list[0];
+    pgcInfo = { site: pgcRef.site, season, list, ep, seasonId: season.season_id || season.seasonId };
+    await applyPgcEp(myGen);
+  }
+
+  // 把某一集应用到面板：标题 / 封面 / cid / 选集下拉。初始化与手动切集共用。
+  async function applyPgcEp(myGen) {
+    const ep = pgcInfo.ep;
+    let cid = ep.cid;
+    if (!cid && (ep.bvid || ep.aid)) {
+      // 个别条目在 season 接口里不带 cid：番剧有 bvid、课程只有 aid，分别退回 view 接口取
+      const v = await fetchView(ep.bvid || ('av' + ep.aid));
+      if (myGen !== undefined && myGen !== _gen) return;
+      cid = v && v.cid;
+    }
+    if (!cid) throw new Error('无法获取该集的 cid（该集数据不完整）');
+    const title = pgcEpTitle(pgcInfo.season, ep, pgcInfo.list);
+    viewData = { title, pic: ep.cover || pgcInfo.season.cover, cid };
+    elTitle.textContent = title;
+    const isPugv = pgcInfo.site === 'pugv';
+    const selName = isPugv ? '课程目录' : '选集';
+    const elEpLabel = $('ep-label');
+    if (elEpLabel) elEpLabel.textContent = selName;
+    $('subtitle').innerHTML = '<span class="id">ep' + ep.id + '</span> <span class="hint">（' +
+      (isPugv ? '课程' : '番剧') + '从上方「' + selName + '」切换 · 封面可右键保存）</span>';
+    if (viewData.pic) {
+      elCover.src = toHttps(viewData.pic);
+      elCover.style.display = 'block';
+    }
+    const sel = $('ep-sel');
+    sel.innerHTML = '';
+    pgcInfo.list.forEach((e) => {
+      const o = document.createElement('option');
+      o.value = e.id;
+      const lg = e.long_title || e.longTitle || '';
+      o.textContent = '第' + (e.title || '?') + '集' + (lg ? ' · ' + lg : '');
+      if (String(e.id) === String(ep.id)) o.selected = true;
+      sel.appendChild(o);
+    });
+    $('epbox').classList.add('show');
+  }
+
+  // 统一填充清晰度下拉：UGC 与 PGC 的 dash 结构已在此前归一化
+  function fillQn() {
+    // 接口返回的 dash.video 顺序不保证，按 id 从高到低排，默认项才可预期
+    const list = (dashData.dash.video || []).slice()
+      .sort((a, b) => Number(b.id) - Number(a.id));
     elQn.innerHTML = '';
-    (dashData.dash.video || []).forEach((v) => {
+    list.forEach((v) => {
       const o = document.createElement('option');
       o.value = v.id;
-      o.textContent = `${QN_LABEL[v.id] || v.id} (${Math.round(v.bandwidth / 1000)}kbps)`;
+      // 选项文案自解释：清晰度名 + 风险提示 + 实际分辨率 + 码率。不放 qn 代号——
+      // 同一档位名下可能有多路（1080P / 1080P60 / 1080P+），靠清晰度名本身就能区分，
+      // 用户不需要去记 B 站的内部代号。
+      const label = QN_LABEL[v.id] || QN_FILE_TAG[v.id] || (v.id + 'P');
+      const bits = [];
+      if (v.width && v.height) bits.push(`${v.width}x${v.height}`);
+      if (v.bandwidth) bits.push(`${Math.round(v.bandwidth / 1000)}kbps`);
+      const detail = bits.length ? `（${bits.join(' · ')}）` : '';
+      o.textContent = `${label}${QN_NOTE[v.id] || ''}${detail}`;
       elQn.appendChild(o);
     });
-    // FLV 分段（用于合并下载）：qn 拉到最高，拿到 durl 能提供的最佳画质
-    try { flvData = await fetchPlayurl(bvid, cid, 0, 120); } catch (e) { flvData = null; }
+    // 默认取「最高的、普通设备能正常看的」那一档
+    const pick = list.find((v) => QN_NOT_DEFAULT.indexOf(Number(v.id)) === -1) || list[0];
+    if (pick) elQn.value = String(pick.id);
+  }
+
+  /* ---------- 下载文件名 ----------
+     统一格式：标题_清晰度标签_视频ID[_用途]
+       UGC：xxx_1080P_BV1xx411c7mD.mp4
+       PGC：番剧名 - 第5集_1080P_ep321808_video.m4s
+     ID 能避免不同视频因封面/标题撞名而互相覆盖下载。                       */
+  function currentVideoId() {
+    if (pgcInfo && pgcInfo.ep) return 'ep' + pgcInfo.ep.id;   // 番剧/课程切过集后要跟着变
+    if (viewData && viewData.bvid) return viewData.bvid;      // 规范 BV 号（av 链接会被换成 BV）
+    return bvid || 'unknown';
+  }
+  function qnFileTag() {
+    const raw = String(elQn.value || '');
+    return raw ? (QN_FILE_TAG[Number(raw)] || raw + 'P') : 'unknown';
+  }
+  // withQn=false 用于与清晰度无关的产物（封面、FLV 合流）
+  function baseName(withQn) {
+    const title = sanitize((viewData && viewData.title) || 'bilibili');
+    const parts = withQn
+      ? [title, qnFileTag(), currentVideoId()]
+      : [title, currentVideoId()];
+    // sanitize 把「?」「:」等非法字符替换成 _，紧跟着的分隔符会连成一串，这里收一下
+    return parts.join('_').replace(/_{2,}/g, '_').replace(/_+$/, '');
+  }
+
+  async function loadPlayurl(cid) {
+    if (pgcInfo) await loadPlayurlPgc();
+    else await loadPlayurlUgc(cid);
+    fillQn();
+    // 番剧基本不提供 FLV 分段，拿不到就把「兼容下载」整行藏掉，不放一个必然失败的按钮
+    const hasFlv = !!(flvData && flvData.durl && flvData.durl.length);
+    $('row-flvm').style.display = hasFlv ? '' : 'none';
     // 诊断：打印实际拿到的 CDN 节点数。若恒为 1，说明 backupUrl 没解析出来，容错层会空转
     try {
       const vu = pickVideoUrls(), au = pickAudioUrls();
@@ -944,10 +1284,38 @@ function main() {
     } catch (e) { /* 解析异常不影响主流程 */ }
   }
 
+  async function loadPlayurlUgc(cid) {
+    dashData = await fetchPlayurl(bvid, cid, 16, 80); // DASH
+    // FLV 分段（用于合并下载）：qn 拉到最高，拿到 durl 能提供的最佳画质
+    try { flvData = await fetchPlayurl(bvid, cid, 0, 120); } catch (e) { flvData = null; }
+  }
+
+  async function loadPlayurlPgc() {
+    const ep = pgcInfo.ep;
+    const raw = await fetchPgcPlayurl(ep, pgcInfo.seasonId, 4048, 120, pgcInfo.site);
+    // 番剧 v2 把老接口的 result 整体塞进了 video_info；课程直接给 dash。两种形态都兜住
+    const vi = raw.video_info || raw;
+    dashData = { dash: vi.dash || { video: [], audio: [] } };
+    if (!((dashData.dash.video || []).length)) {
+      throw new Error('该集没有可取的视频流（会员专享 / 地区限制 / 尚未开播）');
+    }
+    // 试看片段：非会员拿到的正片被截断，不提示的话用户会以为下载器坏了
+    const detail = raw.play_check && raw.play_check.play_detail;
+    if (detail && detail !== 'PLAY_WHOLE') setStatus('注意：当前账号只能获取试看片段（会员才能看全集）');
+    // FLV 分段：番剧多数不提供，失败静默（外层据此隐藏「兼容下载」）
+    flvData = null;
+    try {
+      const fraw = await fetchPgcPlayurl(ep, pgcInfo.seasonId, 0, 80, pgcInfo.site);
+      const fvi = fraw.video_info || fraw;
+      if (fvi.durl && fvi.durl.length) flvData = { durl: fvi.durl };
+    } catch (e) { /* 番剧无 FLV 属于常态 */ }
+  }
+
   function pickVideoUrls() {
     const qn = Number(elQn.value);
     const list = dashData.dash.video || [];
     let pick = list.find(v => v.id === qn) || list[0];
+    if (!pick) return []; // 会员专享 / 未开播等场景可能一条都没有，交给容错层给出可读提示
     // 兼容驼峰与下划线两套字段名：B站不同接口/不同时期返回的键名不一致，
     // 只认一种会导致备用节点整个丢失（表现为「容错层空转，仍然一个节点打到黑」）
     return [pick.baseUrl || pick.base_url, ...(pick.backupUrl || pick.backup_url || [])].filter(Boolean).map(toHttps);
@@ -955,6 +1323,7 @@ function main() {
   function pickAudioUrls() {
     const list = dashData.dash.audio || [];
     let pick = list[0];
+    if (!pick) return []; // 极少数 PGC 条目没有独立音轨（已是混合流），不应抛 TypeError
     // 兼容驼峰与下划线两套字段名：B站不同接口/不同时期返回的键名不一致，
     // 只认一种会导致备用节点整个丢失（表现为「容错层空转，仍然一个节点打到黑」）
     return [pick.baseUrl || pick.base_url, ...(pick.backupUrl || pick.backup_url || [])].filter(Boolean).map(toHttps);
@@ -963,11 +1332,36 @@ function main() {
   // 关闭卡片（右上角 ×）
   guarded($('btn-close'), closePanel);
 
+  // 番剧「选集」下拉：切一集就要重新取一次该集的 playurl（直链按 cid 签发，
+  // 且 B站对影视内容的签名有效期更短，不存在「一次拿全季」的接口）。
+  const elEp = $('ep-sel');
+  if (elEp) elEp.addEventListener('change', async () => {
+    if (!pgcInfo) return;
+    const ep = pgcInfo.list.find((e) => String(e.id) === String(elEp.value));
+    if (!ep) return;
+    if (elEp._busy) return;
+    elEp._busy = true; elEp.disabled = true;
+    setStatus('切换剧集中…');
+    try {
+      const myGen = ++_gen;
+      pgcInfo.ep = ep;
+      await applyPgcEp(myGen);
+      if (myGen !== _gen) return;
+      await loadPlayurl(viewData.cid);
+      if (myGen !== _gen) return;
+      setStatus('已切换剧集');
+    } catch (e) {
+      setStatus('切换剧集失败: ' + (e && e.message));
+    } finally {
+      elEp._busy = false; elEp.disabled = false;
+    }
+  });
+
   // 封面下载
   guarded($('btn-cover'), async () => {
     if (!viewData || !viewData.pic) return setStatus('暂无封面');
     setStatus('封面下载中…');
-    const r = await downloadViaExtension(toHttps(viewData.pic), `${sanitize(viewData.title)}_封面.jpg`);
+    const r = await downloadViaExtension(toHttps(viewData.pic), `${baseName(false)}_封面.jpg`);
     setStatus(r.ok ? '封面已提交下载' : ('封面下载失败: ' + (r.error || '')));
   });
 
@@ -976,7 +1370,7 @@ function main() {
     if (!dashData) return setStatus('请先等待解析');
     setStatus('视频流下载中…');
     try {
-      await downloadStreamWithFallback(pickVideoUrls(), `${sanitize(viewData.title)}_${elQn.value}_video.m4s`,
+      await downloadStreamWithFallback(pickVideoUrls(), `${baseName(true)}_video.m4s`,
         (i, n, node) => setStatus(`主节点失败，切换备用节点 ${i + 1}/${n}（${node}）…`));
       setStatus('视频流已保存（.m4s）— 可在下载目录用本地 ffmpeg 合成');
     } catch (e) {
@@ -987,7 +1381,7 @@ function main() {
     if (!dashData) return setStatus('请先等待解析');
     setStatus('音频流下载中…');
     try {
-      await downloadStreamWithFallback(pickAudioUrls(), `${sanitize(viewData.title)}_audio.m4s`,
+      await downloadStreamWithFallback(pickAudioUrls(), `${baseName(true)}_audio.m4s`,
         (i, n, node) => setStatus(`主节点失败，切换备用节点 ${i + 1}/${n}（${node}）…`));
       setStatus('音频流已保存（.m4s）— 可在下载目录用本地 ffmpeg 合成');
     } catch (e) {
@@ -1067,7 +1461,7 @@ function main() {
       }
     };
     try {
-      const filename = `${sanitize(viewData.title)}_${elQn.value}.mp4`;
+      const filename = `${baseName(true)}.mp4`;
       // init：background 记录 tabId 映射并确保 offscreen 就绪后才回复，
       // 必须 await，否则分块可能先于 offscreen 监听器注册而丢失
       await sendMsg({ type: 'bili-mux-init', requestId, filename });
@@ -1110,7 +1504,7 @@ function main() {
       const bytes = await fetchAndConcat(urls, (ratio) => setBar('f', ratio));
       setBar('f', 1);
       setStatus('转封装为 MP4…');
-      const resp = await saveViaOffscreen(bytes, `${sanitize(viewData.title)}.flv`, 'video/x-flv');
+      const resp = await saveViaOffscreen(bytes, `${baseName(false)}.flv`, 'video/x-flv');
       if (resp.converted) setStatus('已转封装为 MP4 并触发下载');
       else if (resp.note) setStatus(resp.note);
       else setStatus('已触发下载');
@@ -1168,7 +1562,7 @@ function main() {
 (function bootstrap() {
   let started = false;
   function tryStart() {
-    if (started || !getBvid()) return false;
+    if (started || (!getBvid() && !getPgcId())) return false;
     started = true;
     main();
     return true;
