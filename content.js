@@ -702,7 +702,7 @@ const STYLE = `
 `;
 
 // 自有图标：粉色下载箭头（与扩展图标同款设计，站内工具栏里以粉色描边区别于 B站灰标）
-const ICON_SVG = `<svg viewBox="0 0 1024 1024" width="20" height="20" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M832 448h-192V0H384v448H192v64l320 320 320-320V448zM896 896H128v128h768v-128z" fill="currentColor"/></svg>`;
+const ICON_SVG = `<svg viewBox="0 0 1024 1024" width="24" height="24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M512 0a512 512 0 1 0 512 512A512 512 0 0 0 512 0z m256 587.264l-215.04 214.528-2.56 2.56A51.2 51.2 0 0 1 512 819.2a35.328 35.328 0 0 1-12.8 0 16.896 16.896 0 0 1-7.168 0 51.2 51.2 0 0 1-16.384-10.752l-217.088-221.184a51.2 51.2 0 0 1 0-72.192 51.2 51.2 0 0 1 72.192 0L460.8 644.608V256a51.2 51.2 0 0 1 102.4 0v388.608l129.536-129.536A51.2 51.2 0 0 1 768 587.264z" fill="currentColor"/></svg>`;
 
 // 重试/刷新图标（解析失败时显示在状态文字旁）
 const REFRESH_SVG = `<svg viewBox="0 0 1024 1024" width="18" height="18" xmlns="http://www.w3.org/2000/svg"><path d="M369.777778 160.568889a42.666667 42.666667 0 0 1-42.666667 42.666667H128a42.666667 42.666667 0 1 1 0-85.333334h199.111111a42.666667 42.666667 0 0 1 42.666667 42.666667" fill="#fb7299"/><path d="M327.111111 402.346667a42.666667 42.666667 0 0 1-42.666667-42.666667v-199.111111a42.666667 42.666667 0 1 1 85.333334 0v199.111111a42.666667 42.666667 0 0 1-42.666667 42.666667" fill="#fb7299"/><path d="M512.014222 938.652444h-0.753778a424.533333 424.533333 0 0 1-294.272-124.913777c-80.583111-80.583111-124.956444-187.733333-124.956444-301.696 0-113.976889 44.373333-221.112889 124.970667-301.696l73.088-73.116445a42.680889 42.680889 0 0 1 60.359111 60.344889l-73.102222 73.102222a339.057778 339.057778 0 0 0-99.982223 241.351111A339.128889 339.128889 0 0 0 277.333333 753.422222a339.640889 339.640889 0 0 0 235.406223 99.911111 42.680889 42.680889 0 0 1-0.725334 85.333334M654.222222 863.473778v-0.014222a42.666667 42.666667 0 0 1 42.666667-42.666667h199.111111a42.666667 42.666667 0 0 1 0 85.333333H696.888889a42.666667 42.666667 0 0 1-42.666667-42.666666" fill="#fb7299"/><path d="M696.888889 621.681778a42.666667 42.666667 0 0 1 42.666667 42.666666v199.111112a42.666667 42.666667 0 0 1-85.333334 0v-199.111112a42.666667 42.666667 0 0 1 42.666667-42.666666" fill="#fb7299"/><path d="M703.715556 899.285333a42.638222 42.638222 0 0 1-30.165334-72.832l73.130667-73.102222c133.077333-133.091556 133.077333-349.653333 0-482.730667A339.100444 339.100444 0 0 0 505.315556 170.666667a42.666667 42.666667 0 1 1 0-85.333334c113.976889 0 221.112889 44.387556 301.681777 124.970667 166.357333 166.343111 166.357333 436.387556 0 602.730666l-73.130667 73.102223a42.638222 42.638222 0 0 1-30.15111 8.148444z" fill="#fb7299"/></svg>`;
@@ -753,7 +753,7 @@ function buildPanel(host) {
       <div class="fmt-help"><b>兼容下载</b>：HTTP-FLV 流，音视频单文件封装，码率低、体积小、下载快，成功率极高。<br><b>高级下载</b>：DASH 流，音视频分离，支持原画及 4K 高码率，有小概率失败。</div>
       <div class="panel-footer">
         <div class="footer-left"><img class="footer-logo" id="footer-logo" alt="Bili-Mux"/><span class="footer-name">哔哩喵</span></div>
-        <div class="footer-right"><span class="ver" id="panel-ver">v1.2.0</span>
+        <div class="footer-right"><span class="ver" id="panel-ver">v1.2.1</span>
         <a href="https://github.com/c-yyy/bili-mux" target="_blank" rel="noopener" title="GitHub 仓库" aria-label="GitHub 仓库"><svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.26 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg></a></div>
       </div>
     </div>`;
@@ -773,7 +773,7 @@ function injectToolbarStyle() {
     .bili-mux-item { display: inline-flex !important; align-items: center; gap: 4px;
       box-sizing: border-box; user-select: none; cursor: pointer;
       vertical-align: middle; border: 0; background: transparent; }
-    .bili-mux-item svg { width: 20px; height: 20px; display: block; flex: none; }
+    .bili-mux-item svg { width: 24px; height: 24px; display: block; flex: none; }
     .bili-mux-item .bili-mux-label { font-size: 13px; line-height: 1; }
     .bili-mux-item:hover { color: #fb7299 !important;
       border: 0 !important; background: transparent !important;
@@ -823,7 +823,7 @@ function makeToggleBtn(id, extraClass, togglePanel) {
   btn.className = 'bili-mux-item' + (extraClass ? ' ' + extraClass : '');
   btn.setAttribute('role', 'button');
   btn.setAttribute('title', '哔哩喵 (Bili-Mux)');
-  btn.innerHTML = ICON_SVG + '<span class="bili-mux-label">保存</span>';
+  btn.innerHTML = ICON_SVG + '<span class="bili-mux-label">下載</span>';
   btn.style.cursor = 'pointer';
   let _toggleLast = 0;
   btn.addEventListener('click', (e) => {
@@ -1004,7 +1004,7 @@ function main() {
   let flvData = null;      // playurl FLV 结果
   let _gen = 0;            // URL 变化世代号：防止快速切换时旧请求回写新数据
   let _lastKey = (pgcRef ? pgcRef.raw : (bvid || '')) + '|' + location.search; // 上次 URL 标识（含 path 里的 ss/ep 与 query）
-  const _ver = (chrome.runtime.getManifest && chrome.runtime.getManifest().version) || '1.2.0';
+  const _ver = (chrome.runtime.getManifest && chrome.runtime.getManifest().version) || '1.2.1';
   const elVer = $('panel-ver');
   if (elVer) elVer.textContent = 'v' + _ver;
   // 底部栏扩展图标（需 manifest web_accessible_resources 放行）

@@ -6,14 +6,14 @@
 
 ## Download Extension
 
-[⬇️ Download Bili-Mux v1.2.0 (.crx)](https://github.com/c-yyy/bili-mux/raw/main/Bili-Mux-v1.2.0.crx)
+[⬇️ Download Bili-Mux v1.2.1 (.crx)](https://github.com/c-yyy/bili-mux/raw/main/Bili-Mux-v1.2.1.crx)
 
 📄 [Privacy Policy](https://c-yyy.github.io/bili-mux/privacy.html)
 
 ### Installation
 
 1. Open Chrome, enter `chrome://extensions/` in the address bar and enable "Developer mode" (top right).
-2. Drag the downloaded `Bili-Mux-v1.2.0.crx` onto the page and click "Add extension".
+2. Drag the downloaded `Bili-Mux-v1.2.1.crx` onto the page and click "Add extension".
 3. Open any Bilibili video page (logged in) — a pink "Save" button at the end of the toolbar means it's installed.
 
 A Manifest V3 Chrome extension that injects a download panel into Bilibili video pages, supporting cover download, DASH audio/video stream saving, in-browser ffmpeg.wasm MP4 muxing, FLV merge download.
@@ -115,6 +115,11 @@ Each mux request carries a unique `requestId`. `background.js` maintains a `requ
 | `host_permissions` (bilibili.com / bilivideo.com / hdslb.com) | Authenticated API fetch + media stream retrieval |
 
 ## Changelog
+
+### v1.2.1 (2026-09-09)
+
+- **New toolbar icon**: swapped in a circular download icon (filled circle + cut-out arrow), sized 20px → 28px; the icon inherits the button's idle/hover color
+- **Copy rewrite**: extension description and store listing rewritten — dropped `DASH`, `ffmpeg.wasm`, `Offscreen Document` and other jargon in favor of plain-language, user-facing copy, plus mention of anime and course support
 
 ### v1.2.0 (2026-09-08)
 
