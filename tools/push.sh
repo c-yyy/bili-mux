@@ -86,12 +86,31 @@ else
 fi
 
 AUTH_URL=$(remote_with_token)
+
+# 参数整理：走 URL 推送时，参数里的远端名（origin）与 -u 必须摘掉。
+# 否则 git 会把 "origin" 当成一个 refspec 去解析，报
+#   fatal: refs/remotes/origin/HEAD cannot be resolved to branch
+REFS=("$@")
+if [ -n "$AUTH_URL" ]; then
+  REFS=()
+  for a in "$@"; do
+    case "$a" in
+      origin|-u|--set-upstream) continue ;;   # 远端由 AUTH_URL 提供；URL 形式不能设 upstream
+      *) REFS+=("$a") ;;
+    esac
+  done
+  # 没传 refspec 时显式补当前分支：对 URL 推送，git 的 simple 模式不会自动推断
+  if [ ${#REFS[@]} -eq 0 ]; then
+    REFS=("$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo main)")
+  fi
+fi
+
 if [ -n "$AUTH_URL" ]; then
   # 屏蔽 system / global 两份配置：PortableGit 的系统配置会强制走
   # credential-helper-selector → GCM，在没有可用令牌时会挂起等待交互登录
   echo "[push] 使用凭据管理器中的令牌推送（已绕过 credential helper）"
   GIT_CONFIG_SYSTEM=/dev/null GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0 \
-    git "${PROXY_ARGS[@]+"${PROXY_ARGS[@]}"}" push "$AUTH_URL" "$@"
+    git "${PROXY_ARGS[@]+"${PROXY_ARGS[@]}"}" push "$AUTH_URL" "${REFS[@]}"
 else
   echo "[push] 凭据管理器中没有 github.com 的令牌，退回普通推送（可能需要手动登录）"
   git "${PROXY_ARGS[@]+"${PROXY_ARGS[@]}"}" push "$@"
