@@ -9,6 +9,15 @@
 // 由 content 发起的 bili-mux-init 带 sender.tab.id；offscreen 回传时用 requestId 查回 tabId，
 // 再经 chrome.tabs.sendMessage 定向转发，避免多标签互相串台 / 重复下载。
 const _muxTabs = new Map();
+// 从 requestId 反解 tabId（格式 mux_<tabId>_<ts>_<rand>）：
+// SW 重启后 _muxTabs 被清空时的兜底，保证合成结果仍能定向回传给发起标签。
+function tabIdFromRequestId(requestId) {
+  const m = /^mux_(\d+)_/.exec(String(requestId || ''));
+  return m ? Number(m[1]) : null;
+}
+function tabIdFor(requestId, senderTabId) {
+  return senderTabId != null ? senderTabId : tabIdFromRequestId(requestId);
+}
 // requestId -> resolve(result)：把 offscreen 回传的合成结果桥接到 bili-mux-go 那条消息的
 // sendResponse，从而让 SW 在整个合成期间保持存活（return true + 延迟 sendResponse）。
 const _muxPending = new Map();
@@ -23,6 +32,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     const rs = _offscreenReadyResolvers.splice(0);
     rs.forEach((r) => r());
     console.log('[bili-mux] 收到 offscreen 就绪信号');
+    return false;
+  }
+
+  // 0.5) content 主动查询自己的 tabId。
+  //     用途：MV3 的 SW 空闲即被回收，重启后内存里的 requestId→tabId 映射会丢失，
+  //     合成结果就找不到目标标签回传（content 只能干等到超时）。
+  //     content 把 tabId 编进 requestId，SW 重启后可用 tabIdFor() 反解，无需任何存储权限。
+  if (msg.type === 'bili-get-tabid' && sender && sender.tab) {
+    sendResponse({ tabId: sender.tab.id });
     return false;
   }
 
@@ -53,7 +71,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // 2a) init：content 拉流完成后发起。记录会话并确保 offscreen 就绪后才回复，
   //     保证后续分块到达时 offscreen 监听器已注册（否则分块丢失）。
   if (msg.type === 'bili-mux-init' && sender && sender.tab) {
-    const tabId = sender.tab.id;
+    const tabId = tabIdFor(msg.requestId, sender.tab.id);
     _muxTabs.set(msg.requestId, tabId);
     console.log('[bili-mux] 收到 init, requestId =', msg.requestId, 'tabId =', tabId, 'filename =', msg.filename);
     ensureOffscreen().then(() => {
@@ -117,8 +135,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
     // 收尾：结果转给发起标签（更新 UI），并关闭 go 消息的端口
     resultP.then((result) => {
-      const tabId = _muxTabs.get(requestId);
-      console.log('[bili-mux] 合成结束, requestId =', requestId, 'ok =', result.ok);
+      const tabId = _muxTabs.get(requestId) ?? tabIdFromRequestId(requestId);
+      console.log('[bili-mux] 合成结束, requestId =', requestId, 'tabId =', tabId, 'ok =', result.ok);
       if (tabId != null) {
         // 结果仅承载状态（下载已由 offscreen 文档 <a download> 完成），转发给 content 更新 UI
         chrome.tabs.sendMessage(tabId, { type: 'bili-mux-result', routed: true, replyTo: requestId, ok: !!result.ok, error: result.error, filename: result.filename }).catch(() => {});
@@ -136,7 +154,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   //    注：成品下载由 offscreen 文档自己 <a download> 完成（chrome.downloads 不支持 blob: URL，
   //    content 的 <a download> 又被页面沙箱拦截），SW 只负责转发状态。
   if ((msg.type === 'bili-mux-result' || msg.type === 'bili-mux-progress') && sender && !sender.tab) {
-    const tabId = _muxTabs.get(msg.replyTo);
+    // SW 可能在合成期间被回收后重启：此时 _muxTabs 已空，改从 requestId 反解 tabId
+    const tabId = _muxTabs.get(msg.replyTo) ?? tabIdFromRequestId(msg.replyTo);
     if (msg.type === 'bili-mux-result') {
       console.log('[bili-mux] 收到 offscreen 结果, replyTo =', msg.replyTo, 'ok =', msg.ok);
       const resolve = _muxPending.get(msg.replyTo);

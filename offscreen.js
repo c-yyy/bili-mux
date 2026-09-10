@@ -321,7 +321,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   // save init：建立会话缓冲
   if (msg.type === 'bili-save-init') {
-    _saveSessions.set(msg.requestId, { filename: msg.filename || 'download', mime: msg.mime, chunks: [] });
+    // seen：已入块下标集合（content 侧瞬时错误会自动重发一次，需按 index 去重）
+    _saveSessions.set(msg.requestId, { filename: msg.filename || 'download', mime: msg.mime, chunks: [], seen: new Set() });
     sendResponse({ ok: true });
     return false;
   }
@@ -330,8 +331,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'bili-save-chunk') {
     const s = _saveSessions.get(msg.requestId);
     if (!s) { sendResponse({ ok: false, error: 'save 会话不存在（init 未到达或已清理）' }); return false; }
+    if (s.seen.has(msg.index)) { sendResponse({ ok: true }); return false; } // 重发的重复块
     try {
       s.chunks.push(b64ToU8(msg.b64 || ''));
+      s.seen.add(msg.index);
       sendResponse({ ok: true });
     } catch (e) {
       sendResponse({ ok: false, error: String((e && e.message) || e) });
@@ -380,7 +383,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   // init：重置会话缓冲（content 拉流完成后、发分块前调用）
   if (msg.type === 'bili-mux-init') {
-    _sessions.set(msg.requestId, { filename: msg.filename || 'mux.mp4', video: [], audio: [] });
+    // vSeen/aSeen：已入块的下标集合。content 侧对瞬时错误会自动重发一次分块，
+    // 若上一块其实已到达、只是回执丢失，重复 push 会让输入体积翻倍（历史坑），故按 index 去重。
+    _sessions.set(msg.requestId, { filename: msg.filename || 'mux.mp4', video: [], audio: [], vSeen: new Set(), aSeen: new Set() });
     console.log('[ffmpeg] 收到 init, requestId =', msg.requestId, 'filename =', msg.filename);
     sendResponse({ ok: true });
     return false;
@@ -390,9 +395,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'bili-mux-chunk') {
     const s = _sessions.get(msg.requestId);
     if (!s) { sendResponse({ ok: false, error: '会话不存在（init 未到达或已清理）' }); return false; }
+    const isAudio = msg.stream === 'audio';
+    const seen = isAudio ? s.aSeen : s.vSeen;
+    if (seen.has(msg.index)) { // 重发的重复块：丢弃，避免输入体积翻倍
+      sendResponse({ ok: true });
+      return false;
+    }
     try {
       const bytes = b64ToU8(msg.b64 || '');
-      (msg.stream === 'audio' ? s.audio : s.video).push(bytes);
+      (isAudio ? s.audio : s.video).push(bytes);
+      seen.add(msg.index);
       sendResponse({ ok: true });
     } catch (e) {
       sendResponse({ ok: false, error: String((e && e.message) || e) });

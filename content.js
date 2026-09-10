@@ -401,11 +401,52 @@ async function fetchPlayurl(bvid, cid, fnval, qn) {
 }
 
 /* ============================ 下载落地 ============================ */
-function downloadViaExtension(url, filename) {
-  return new Promise((resolve) => {
-    chrome.runtime.sendMessage({ type: 'bili-download', url, filename }, (resp) => {
-      resolve(resp || { ok: false, error: 'no response' });
-    });
+async function downloadViaExtension(url, filename) {
+  // 走统一封装：上下文失效时抛出明确错误（而不是静默 resolve 成 "no response"）
+  const resp = await sendRuntimeMessage({ type: 'bili-download', url, filename });
+  return resp || { ok: false, error: 'no response' };
+}
+
+// —— 扩展上下文存活检测 & 统一消息发送 ——
+// 「Extension context invalidated」的含义：扩展被更新 / 重载 / 禁用 / 卸载后，
+// 已经注入到页面里的 content script 会变成「孤儿」——DOM、定时器、监听器都还在，
+// 但它背后的扩展进程已经没了，任何 chrome.* 调用都会抛这个错。
+// 典型触发：手动在 chrome://extensions 点刷新、或 Chrome 自动更新了来自商店的扩展。
+// 判定方法（同步、可靠）：上下文存活时 chrome.runtime.id 才有值，失效后为 undefined。
+function isCtxAlive() {
+  return !!(typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.id);
+}
+const CTX_DEAD_RE = /extension context invalidated/i;
+function isCtxDeadError(e) {
+  return !!(e && (e.ctxDead === true || CTX_DEAD_RE.test((e && e.message) || '')));
+}
+// 统一的 runtime 消息发送：
+//  · 发送前先做上下文自检，失效则抛出 ctxDead 错误（上层据此提示刷新页面，而不是无意义重试）
+//  · 端口瞬时关闭等非致命错误自动重试一次（reject 前），避免整条流程因一次抖动失败
+function sendRuntimeMessage(payload, retry = 1) {
+  return new Promise((res, rej) => {
+    let attempt = 0;
+    const go = () => {
+      if (!isCtxAlive()) return rej(Object.assign(new Error('Extension context invalidated'), { ctxDead: true }));
+      try {
+        chrome.runtime.sendMessage(payload, (resp) => {
+          const err = chrome.runtime.lastError;
+          if (!err) return res(resp);
+          const msg = err.message || '';
+          const dead = CTX_DEAD_RE.test(msg);
+          if (!dead && attempt < retry) { attempt++; return setTimeout(go, 250); }
+          rej(Object.assign(new Error(msg), { ctxDead: dead }));
+        });
+      } catch (e) {
+        // 上下文失效时 Chrome 也可能同步 throw（而非走 lastError）
+        if (CTX_DEAD_RE.test((e && e.message) || '')) {
+          return rej(Object.assign(new Error(e.message), { ctxDead: true }));
+        }
+        if (attempt < retry) { attempt++; return setTimeout(go, 250); }
+        rej(e);
+      }
+    };
+    go();
   });
 }
 
@@ -432,12 +473,7 @@ function downloadBlob(blob, filename) {
 // 返回 bili-save-go 的响应（含 converted 标记：FLV 是否已转封装为 MP4）。
 async function saveViaOffscreen(bytes, filename, mime) {
   const requestId = 'save_' + Date.now() + '_' + Math.random().toString(36).slice(2);
-  const sendMsg = (payload) => new Promise((res, rej) => {
-    chrome.runtime.sendMessage(payload, (resp) => {
-      if (chrome.runtime.lastError) return rej(new Error(chrome.runtime.lastError.message));
-      res(resp);
-    });
-  });
+  const sendMsg = (payload) => sendRuntimeMessage(payload);
   await sendMsg({ type: 'bili-save-init', requestId, filename, mime });
   const CHUNK = 16 * 1048576;
   const n = Math.max(1, Math.ceil(bytes.length / CHUNK));
@@ -1010,9 +1046,26 @@ function main() {
   // 底部栏扩展图标（需 manifest web_accessible_resources 放行）
   const elLogo = $('footer-logo');
   if (elLogo) elLogo.src = chrome.runtime.getURL('icons/icon128.png');
-  // 重试按钮
+  // 重试按钮：动作可配置（解析失败→重新解析；下载失败→重跑该下载；
+  // 扩展上下文失效→刷新页面，因为孤儿 content script 无法自愈，只有刷新这一条路）
   const btnRetry = $('btn-retry');
-  if (btnRetry) { btnRetry.innerHTML = REFRESH_SVG; btnRetry.addEventListener('click', () => { btnRetry.style.display = 'none'; init(); }); }
+  let _retryAction = null;
+  function showRetry(action, title) {
+    if (!btnRetry) return;
+    _retryAction = action;
+    const label = title || '重试';
+    btnRetry.title = label;
+    btnRetry.setAttribute('aria-label', label);
+    btnRetry.style.display = '';
+  }
+  function hideRetry() {
+    if (btnRetry) btnRetry.style.display = 'none';
+    _retryAction = null;
+  }
+  if (btnRetry) {
+    btnRetry.innerHTML = REFRESH_SVG;
+    btnRetry.addEventListener('click', () => { const a = _retryAction; hideRetry(); if (a) a(); });
+  }
   console.info('%c bili-mux %c v' + _ver + ' %c 加载成功 ',
     'padding: 2px 6px; border-radius: 3px 0 0 3px; color: #fff; background: #fb7299; font-weight: bold;',
     'padding: 2px 6px; color: #fff; background: #FF9999; font-weight: bold;',
@@ -1134,7 +1187,7 @@ function main() {
 
   async function init() {
     const myGen = ++_gen; // 本次解析世代号；若期间发生 URL 变化，旧请求回写会被丢弃
-    if (btnRetry) btnRetry.style.display = 'none';
+    hideRetry();
     try {
       if (pgcRef) await initPgc(myGen);
       else await initUgc(myGen);
@@ -1146,7 +1199,9 @@ function main() {
       if (myGen !== _gen) return; // 已被新导航取代，静默
       elTitle.textContent = '解析失败';
       setStatus(e.message);
-      if (btnRetry) btnRetry.style.display = '';
+      // 扩展上下文失效（扩展被更新/重载）时重试无意义，只能刷新页面重建 content script
+      if (isCtxDeadError(e)) showRetry(() => location.reload(), '刷新页面（扩展已更新，需刷新才能继续）');
+      else showRetry(() => init(), '重新解析');
       console.error('[bili-mux] 解析失败:', e && e.message);
     }
   }
@@ -1360,32 +1415,41 @@ function main() {
   // 封面下载
   guarded($('btn-cover'), async () => {
     if (!viewData || !viewData.pic) return setStatus('暂无封面');
+    hideRetry();
     setStatus('封面下载中…');
-    const r = await downloadViaExtension(toHttps(viewData.pic), `${baseName(false)}_封面.jpg`);
-    setStatus(r.ok ? '封面已提交下载' : ('封面下载失败: ' + (r.error || '')));
+    try {
+      const r = await downloadViaExtension(toHttps(viewData.pic), `${baseName(false)}_封面.jpg`);
+      setStatus(r.ok ? '封面已提交下载' : ('封面下载失败: ' + (r.error || '')));
+    } catch (e) {
+      failWithRetry('封面下载失败: ' + (e && e.message), 'btn-cover', e, '重试封面下载');
+    }
   });
 
   // DASH 视频 / 音频 分别保存：两份独立 m4s，留给用户自行合成
   guarded($('btn-video'), async () => {
     if (!dashData) return setStatus('请先等待解析');
+    hideRetry();
     setStatus('视频流下载中…');
     try {
       await downloadStreamWithFallback(pickVideoUrls(), `${baseName(true)}_video.m4s`,
         (i, n, node) => setStatus(`主节点失败，切换备用节点 ${i + 1}/${n}（${node}）…`));
       setStatus('视频流已保存（.m4s）— 可在下载目录用本地 ffmpeg 合成');
     } catch (e) {
-      setStatus('视频流下载失败: ' + (e && e.message) + '（可改用 FLV 合并或浏览器内合成）');
+      failWithRetry('视频流下载失败: ' + (e && e.message) + '（可改用 FLV 合并或浏览器内合成）',
+        'btn-video', e, '重试视频流下载');
     }
   });
   guarded($('btn-audio'), async () => {
     if (!dashData) return setStatus('请先等待解析');
+    hideRetry();
     setStatus('音频流下载中…');
     try {
       await downloadStreamWithFallback(pickAudioUrls(), `${baseName(true)}_audio.m4s`,
         (i, n, node) => setStatus(`主节点失败，切换备用节点 ${i + 1}/${n}（${node}）…`));
       setStatus('音频流已保存（.m4s）— 可在下载目录用本地 ffmpeg 合成');
     } catch (e) {
-      setStatus('音频流下载失败: ' + (e && e.message) + '（可改用 FLV 合并或浏览器内合成）');
+      failWithRetry('音频流下载失败: ' + (e && e.message) + '（可改用 FLV 合并或浏览器内合成）',
+        'btn-audio', e, '重试音频流下载');
     }
   });
 
@@ -1398,8 +1462,40 @@ function main() {
   // 字节数转 MB（保留两位小数），用于日志展示流体积
   function mb(bytes) { return (bytes / 1048576).toFixed(2) + ' MB'; }
   let _muxResolver = null;
+  // 本标签页的 tabId：Service Worker 被回收/重启时会丢掉内存里的 requestId→tabId 映射，
+  // 导致合成结果找不到目标标签回传（content 会干等到 600s 超时）。
+  // 把 tabId 一并编进 requestId，SW 重启后也能解析出来，无需任何持久化权限。
+  let _tabId = null;
+  async function getTabId() {
+    if (_tabId != null) return _tabId;
+    try {
+      const r = await sendRuntimeMessage({ type: 'bili-get-tabid' });
+      if (r && typeof r.tabId === 'number') _tabId = r.tabId;
+    } catch (e) { /* 取不到就退化：SW 未重启时仍可靠 sender.tab.id 工作 */ }
+    return _tabId;
+  }
+  // 通用失败处理：上下文失效 → 只能刷新页面（孤儿 content script 无法自愈）；
+  // 其余情况 → 按钮变成「重试」，点击重跑对应动作（走 guarded，天然防抖/加锁）
+  function failWithRetry(text, btnId, e, retryLabel) {
+    setStatus(text);
+    if (isCtxDeadError(e)) showRetry(() => location.reload(), '刷新页面（扩展已更新，需刷新才能继续）');
+    else if (btnId) showRetry(() => $(btnId).click(), retryLabel || '重试');
+  }
+  function muxFailed(text, e) {
+    $('muxbox').style.display = 'none';
+    if (_muxResolver) { const r = _muxResolver; _muxResolver = null; r(); } // 释放等待锁
+    failWithRetry(text, 'btn-mux', e, '重试高级下载');
+    console.error('[bili-mux] mux 失败:', text, e && e.message);
+  }
   guarded($('btn-mux'), async () => {
     if (!dashData) return setStatus('请先等待解析');
+    hideRetry();
+    // 预检：扩展上下文若已失效（被更新/重载），此刻就提示，
+    // 不要等用户白拉几百 MB 流、最后才在传输阶段炸掉
+    if (!isCtxAlive()) {
+      return muxFailed('扩展已更新/重载，本页面需刷新后才能继续（已跳过拉流）',
+        Object.assign(new Error('Extension context invalidated'), { ctxDead: true }));
+    }
     $('muxbox').style.display = 'block';
     setBar('m', 0);
     let vBuf = null, aBuf = null;
@@ -1422,10 +1518,9 @@ function main() {
         (i, n, node) => setStatus(`音频流主节点失败，切换备用节点 ${i + 1}/${n}（${node}）…`));
       console.log('[bili-mux] mux: 音频流拉取完成', mb(aBuf.byteLength));
     } catch (e) {
-      // 拉流失败：给出明确提示，不进入等待、不乱回退，避免按钮卡死
-      setStatus('拉取流失败: ' + (e && e.message) + '（可改用 FLV 合并或分离下载）');
-      $('muxbox').style.display = 'none';
-      return;
+      // 拉流失败：给出明确提示 + 重试入口（CDN 抖动很常见，值得一键重试），
+      // 不进入等待、不乱回退，避免按钮卡死
+      return muxFailed('拉取流失败: ' + (e && e.message) + '（可改用 FLV 合并或分离下载）', e);
     }
     setStatus('准备传输…');
     setBar('m', 0);
@@ -1439,13 +1534,11 @@ function main() {
     // （编码后约 21.3MB），留足余量。成品由 offscreen 直接 chrome.downloads 下载，
     // 不回传 content，彻底避开回程 64MiB 限制。
     const RAW_CHUNK = 16 * 1048576;
-    const requestId = 'mux_' + Date.now() + '_' + Math.random().toString(36).slice(2);
-    // 带回调的 sendMessage 封装：lastError 转 reject，便于 await 做流控
-    const sendMsg = (payload) => new Promise((res, rej) => {
-      chrome.runtime.sendMessage(payload, () => {
-        chrome.runtime.lastError ? rej(new Error(chrome.runtime.lastError.message)) : res();
-      });
-    });
+    const tabId = await getTabId();
+    // requestId 形如 mux_<tabId>_<ts>_<rand>：SW 重启后可从 requestId 反解目标标签
+    const requestId = 'mux_' + (tabId == null ? 'x' : tabId) + '_' + Date.now() + '_' + Math.random().toString(36).slice(2);
+    // 统一走 sendRuntimeMessage：上下文失效立即失败（不再瞎重试），瞬时错误自动重试一次
+    const sendMsg = (payload) => sendRuntimeMessage(payload);
     const sendChunks = async (stream, buf, label) => {
       const bytes = new Uint8Array(buf);
       const n = Math.max(1, Math.ceil(bytes.length / RAW_CHUNK));
@@ -1475,9 +1568,7 @@ function main() {
         console.error('[bili-mux] mux: go 失败', e && e.message);
       });
     } catch (e) {
-      setStatus('传输失败: ' + (e && e.message) + '（可改用 FLV 合并或分离下载）');
-      $('muxbox').style.display = 'none';
-      return;
+      return muxFailed('传输失败: ' + (e && e.message) + '（可改用 FLV 合并或分离下载）', e);
     }
     setStatus('浏览器内合成中…');
     setBar('m', 0); // 交给 offscreen 的合成进度（0→1）接管
@@ -1488,8 +1579,11 @@ function main() {
       const finish = () => { if (done) return; done = true; _muxResolver = null; res(); };
       _muxResolver = finish;
       setTimeout(() => {
-        if (!done) { console.error('[bili-mux] mux: 等待合成结果超时(600s)'); setStatus('合成等待超时，仍在后台进行可稍候，或点按钮重试 / 改用分离下载'); }
-        finish();
+        if (!done) {
+          // 等待超时：多半是 SW 重启后结果没能回传，或 ffmpeg 卡住；给重试入口而不是干等
+          muxFailed('合成等待超时（600s 未回传结果），可点重试 / 改用分离下载', null);
+          finish();
+        }
       }, 600000);
     });
   });
@@ -1497,6 +1591,7 @@ function main() {
   // FLV 合并下载（二进制拼接即得可播放文件；offscreen 会自动转封装为 MP4 提升兼容性，失败回退原 FLV）
   guarded($('btn-flvm'), async () => {
     if (!flvData || !flvData.durl || !flvData.durl.length) return setStatus('该视频不支持 FLV 合并（可能仅 DASH）');
+    hideRetry();
     $('flvbox').style.display = 'block';
     setBar('f', 0);
     try {
@@ -1508,7 +1603,9 @@ function main() {
       if (resp.converted) setStatus('已转封装为 MP4 并触发下载');
       else if (resp.note) setStatus(resp.note);
       else setStatus('已触发下载');
-    } catch (e) { setStatus('FLV 合并失败: ' + e.message); }
+    } catch (e) {
+      failWithRetry('FLV 合并失败: ' + (e && e.message), 'btn-flvm', e, '重试 FLV 合并');
+    }
   });
 
   // 来自 background 的定向消息：popup 唤起面板、合成进度、合成结果。
@@ -1546,6 +1643,7 @@ function main() {
         const reason = (msg.error || '未知原因').trim();
         console.error('[bili-mux] mux: 浏览器合成失败，原因 =\n' + reason);
         setStatus('浏览器内合成失败。原因: ' + reason + '（详见控制台 [bili-mux] 日志）');
+        if (!/Extension context invalidated/i.test(reason)) showRetry(() => $('btn-mux').click(), '重试高级下载');
       }
       return;
     }
