@@ -6,14 +6,14 @@
 
 ## Download Extension
 
-[⬇️ Download Bili-Mux v1.2.1 (.crx)](https://github.com/c-yyy/bili-mux/raw/main/Bili-Mux-v1.2.1.crx)
+[⬇️ Download Bili-Mux v1.2.2 (.crx)](https://github.com/c-yyy/bili-mux/raw/main/Bili-Mux-v1.2.2.crx)
 
 📄 [Privacy Policy](https://c-yyy.github.io/bili-mux/privacy.html)
 
 ### Installation
 
 1. Open Chrome, enter `chrome://extensions/` in the address bar and enable "Developer mode" (top right).
-2. Drag the downloaded `Bili-Mux-v1.2.1.crx` onto the page and click "Add extension".
+2. Drag the downloaded `Bili-Mux-v1.2.2.crx` onto the page and click "Add extension".
 3. Open any Bilibili video page (logged in) — a pink "Save" button at the end of the toolbar means it's installed.
 
 A Manifest V3 Chrome extension that injects a download panel into Bilibili video pages, supporting cover download, DASH audio/video stream saving, in-browser ffmpeg.wasm MP4 muxing, FLV merge download.
@@ -115,6 +115,13 @@ Each mux request carries a unique `requestId`. `background.js` maintains a `requ
 | `host_permissions` (bilibili.com / bilivideo.com / hdslb.com) | Authenticated API fetch + media stream retrieval |
 
 ## Changelog
+
+### v1.2.2 (2026-09-10)
+
+- **Fixed intermittent "Extension context invalidated" failure in advanced download**: after the extension is updated/reloaded, already-injected content scripts become orphans — fetching (plain `fetch`) still completes and the error only surfaces at chunk transfer, wasting hundreds of MB. The action now checks the context up front and, if invalid, prompts a reload instead of running the fetch; transient message errors are retried once automatically
+- **Retry button on failures**: parse / stream / transfer / mux / timeout / cover / separate-stream / FLV failures now show a retry button next to the status text that re-runs the action; for invalidated contexts the button becomes "Reload page"
+- **Mux results survive Service Worker restarts**: the tabId is encoded into the requestId so the target tab can be recovered after the SW is recycled (no extra permissions); offscreen dedupes chunks by index so auto-retry can't double the mux input
+- **Toolbar icon default color changed to `#61666d`**: matches Bilibili's native toolbar grey; icon and label both turn brand pink on hover
 
 ### v1.2.1 (2026-09-09)
 

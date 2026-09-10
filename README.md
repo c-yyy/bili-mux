@@ -6,14 +6,14 @@
 
 ## 下载插件
 
-[⬇️ 下载 Bili-Mux v1.2.1（.crx）](https://github.com/c-yyy/bili-mux/raw/main/Bili-Mux-v1.2.1.crx)
+[⬇️ 下载 Bili-Mux v1.2.2（.crx）](https://github.com/c-yyy/bili-mux/raw/main/Bili-Mux-v1.2.2.crx)
 
 📄 [隐私政策](https://c-yyy.github.io/bili-mux/privacy.html)
 
 ### 安装教程
 
 1. 打开 Chrome，地址栏输入 `chrome://extensions/` 并开启右上角「开发者模式」。
-2. 将下载的 `Bili-Mux-v1.2.1.crx` 拖入页面，点击「添加扩展程序」。
+2. 将下载的 `Bili-Mux-v1.2.2.crx` 拖入页面，点击「添加扩展程序」。
 3. 打开任意 B站视频页（需已登录），工具栏末尾出现粉色「保存」按钮即安装成功。
 
 一个 Manifest V3 Chrome 扩展，在 B站视频页注入下载面板，支持封面下载、DASH 音视频流分离保存、浏览器内 ffmpeg.wasm 合成 MP4、FLV 合并下载。
@@ -115,6 +115,13 @@ B站媒体 CDN（`bilivideo.com` 等）校验 Referer。`chrome.downloads` 发�
 | `host_permissions`（bilibili.com / bilivideo.com / hdslb.com） | 携带登录态 fetch API + 拉取媒体流 |
 
 ## 更新日志
+
+### v1.2.2（2026-09-10）
+
+- **修复高级下载偶发失败「Extension context invalidated」**：扩展被更新/重载后，已注入的 content script 会变孤儿，拉流（纯 fetch）能跑完、直到分块传输才报错，用户白等几百 MB。现在动作开头即预检上下文，失效时跳过拉流直接提示刷新；消息发送对瞬时错误自动重试一次
+- **失败处新增重试按钮**：解析 / 拉流 / 传输 / 合成 / 等待超时 / 封面 / 分离下载 / FLV 合并失败时，状态文字旁出现重试按钮，点击重跑对应动作；上下文失效场景按钮变为「刷新页面」
+- **Service Worker 重启不再丢失合成结果**：tabId 编入 requestId，SW 被回收后仍能反解目标标签回传结果（不新增任何权限）；offscreen 分块按 index 去重，避免自动重发导致合成体积翻倍
+- **工具栏图标默认色改为 `#61666d`**：与 B站原生工具栏同款灰，悬停时图标与文字一起变品牌粉
 
 ### v1.2.1（2026-09-09）
 
