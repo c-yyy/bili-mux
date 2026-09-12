@@ -14,3 +14,6 @@ node_modules/
 
 # 私钥（chrome --pack-extension-key=xxx.pem 生成）
 *.pem
+
+# ffmpeg 补丁前的原始文件（tools/patch-ffmpeg.js 的临时备份）
+*.orig

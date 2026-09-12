@@ -6,14 +6,14 @@
 
 ## Download Extension
 
-[⬇️ Download Bili-Mux v1.2.2 (.crx)](https://github.com/c-yyy/bili-mux/raw/main/Bili-Mux-v1.2.2.crx)
+[⬇️ Download Bili-Mux v1.2.3 (.crx)](https://github.com/c-yyy/bili-mux/raw/main/Bili-Mux-v1.2.3.crx)
 
 📄 [Privacy Policy](https://c-yyy.github.io/bili-mux/privacy.html)
 
 ### Installation
 
 1. Open Chrome, enter `chrome://extensions/` in the address bar and enable "Developer mode" (top right).
-2. Drag the downloaded `Bili-Mux-v1.2.2.crx` onto the page and click "Add extension".
+2. Drag the downloaded `Bili-Mux-v1.2.3.crx` onto the page and click "Add extension".
 3. Open any Bilibili video page (logged in) — a pink "Save" button at the end of the toolbar means it's installed.
 
 A Manifest V3 Chrome extension that injects a download panel into Bilibili video pages, supporting cover download, DASH audio/video stream saving, in-browser ffmpeg.wasm MP4 muxing, FLV merge download.
@@ -115,6 +115,12 @@ Each mux request carries a unique `requestId`. `background.js` maintains a `requ
 | `host_permissions` (bilibili.com / bilivideo.com / hdslb.com) | Authenticated API fetch + media stream retrieval |
 
 ## Changelog
+
+### v1.2.3 (2026-09-12)
+
+- **Fixed the Chrome Web Store rejection for "remotely hosted code"**: the published `@ffmpeg/ffmpeg` bundle ships a default config whose `corePath` points at `https://unpkg.com/@ffmpeg/core@`. At runtime we always pass an explicit local path so nothing is ever fetched from the network, but the store performs static scanning and flags that URL. `tools/patch-ffmpeg.js` now rewrites it to the bundled core during packaging, and drops the sourceMappingURL comment pointing at a resource that isn't shipped
+- **Tightened `web_accessible_resources`**: `lib/ffmpeg/*` used to be exposed to `<all_urls>`. The whole ffmpeg runtime only loads inside the extension's own Offscreen Document, so it never needed exposure; only `icons/icon128.png` remains, scoped to `*.bilibili.com`
+- Added `tools/patch-ffmpeg.js` (idempotent, wired into pack.sh / zip.sh) and `tools/verify-extension.js` (loads the extension in real Chrome for a smoke check)
 
 ### v1.2.2 (2026-09-10)
 

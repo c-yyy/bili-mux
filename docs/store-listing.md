@@ -62,6 +62,7 @@
 | declarativeNetRequestWithHostAccess | 为 bilivideo.com 域的媒体请求注入 Referer 头，使媒体流可正常获取 |
 | content_scripts（声明式注入，无需 scripting 权限） | 在 bilibili.com 视频页 / 稍后再看等 /list/* 播放页 / 番剧页（/bangumi/play/*）/ 课程页（/cheese/play/*）注入留存操作面板，供用户选择清晰度与留存方式 |
 | offscreen | 创建 Offscreen Document 运行 ffmpeg.wasm，在后台完成音视频流封装 |
+| **web_accessible_resources：仅 icons/icon128.png，且限定 bilibili.com** | 面板左上角显示扩展图标。**不含任何脚本**：ffmpeg.wasm 全套（含 wasm 与 worker）随扩展包体分发，仅在 Offscreen Document（扩展自有页面 chrome-extension://）内加载，不对外暴露、不注入任何网页 |
 | host_permissions: bilibili.com | 调用 B站 API 获取视频信息与播放地址（使用用户已有登录态） |
 | host_permissions: bilivideo.com | 获取媒体流数据用于本地留存 |
 | host_permissions: bilivideo.cn | 获取媒体流数据（备用 CDN 域名） |

@@ -6,14 +6,14 @@
 
 ## 下载插件
 
-[⬇️ 下载 Bili-Mux v1.2.2（.crx）](https://github.com/c-yyy/bili-mux/raw/main/Bili-Mux-v1.2.2.crx)
+[⬇️ 下载 Bili-Mux v1.2.3（.crx）](https://github.com/c-yyy/bili-mux/raw/main/Bili-Mux-v1.2.3.crx)
 
 📄 [隐私政策](https://c-yyy.github.io/bili-mux/privacy.html)
 
 ### 安装教程
 
 1. 打开 Chrome，地址栏输入 `chrome://extensions/` 并开启右上角「开发者模式」。
-2. 将下载的 `Bili-Mux-v1.2.2.crx` 拖入页面，点击「添加扩展程序」。
+2. 将下载的 `Bili-Mux-v1.2.3.crx` 拖入页面，点击「添加扩展程序」。
 3. 打开任意 B站视频页（需已登录），工具栏末尾出现粉色「保存」按钮即安装成功。
 
 一个 Manifest V3 Chrome 扩展，在 B站视频页注入下载面板，支持封面下载、DASH 音视频流分离保存、浏览器内 ffmpeg.wasm 合成 MP4、FLV 合并下载。
@@ -115,6 +115,12 @@ B站媒体 CDN（`bilivideo.com` 等）校验 Referer。`chrome.downloads` 发�
 | `host_permissions`（bilibili.com / bilivideo.com / hdslb.com） | 携带登录态 fetch API + 拉取媒体流 |
 
 ## 更新日志
+
+### v1.2.3（2026-09-12）
+
+- **修复商店审核「包含远程托管代码」拒审**：`@ffmpeg/ffmpeg` 的发布包内置一个把 `corePath` 指向 `https://unpkg.com/@ffmpeg/core@` 的默认配置。本项目运行时始终显式传本地路径，不会真的联网取，但商店是静态扫描、见该直链即判违规。现由 `tools/patch-ffmpeg.js` 在打包时把它改写成包内自带的 core，并去掉指向不存在资源的 sourceMappingURL 注释
+- **收紧 `web_accessible_resources`**：原先 `lib/ffmpeg/*` 对 `<all_urls>` 开放。ffmpeg 全套只在扩展自有页面（Offscreen Document）内加载，本就不需要对外暴露；现仅保留 `icons/icon128.png`（面板图标）且限定 `*.bilibili.com`
+- 新增 `tools/patch-ffmpeg.js`（幂等，已接入 pack.sh / zip.sh）与 `tools/verify-extension.js`（真机加载扩展做冒烟校验）
 
 ### v1.2.2（2026-09-10）
 

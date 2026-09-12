@@ -17,10 +17,17 @@ STAGE=".tmp-pack"
 rm -rf "$STAGE"
 mkdir -p "$STAGE/lib/ffmpeg" "$STAGE/icons"
 
+# —— 合规修补：去掉 ffmpeg.min.js 里指向 unpkg CDN 的默认 corePath ——
+# @ffmpeg/ffmpeg 的发布包内置了一个把 corePath 指向 https://unpkg.com/@ffmpeg/core@ 的
+# 默认配置。运行时我们总是显式传本地 corePath，不会真的去下载，但 Chrome 应用商店是静态
+# 扫描，见这个直链即判「Manifest V3 产品包含远程托管代码」拒审（v1.2.2 就栽在这）。
+# 每次打包都跑一遍，保证 npm install 取回原始文件后不会漏掉这道处理。
+node tools/patch-ffmpeg.js
+
 # —— 运行时必需文件 ——
 cp manifest.json content.js background.js offscreen.js offscreen.html \
    popup.html popup.js popup.css rules.json "$STAGE/"
-cp lib/ffmpeg/* "$STAGE/lib/ffmpeg/"
+cp lib/ffmpeg/*.js lib/ffmpeg/*.wasm "$STAGE/lib/ffmpeg/"
 cp icons/icon16.png icons/icon48.png icons/icon128.png "$STAGE/icons/"
 
 # —— crx3 打包（-p 指定私钥：不存在则生成并保存，之后复用保证扩展 ID 稳定） ——

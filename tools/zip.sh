@@ -12,9 +12,12 @@ STAGE=".tmp-zip"
 rm -rf "$STAGE"
 mkdir -p "$STAGE/lib/ffmpeg" "$STAGE/icons"
 
+# —— 合规修补：同 pack.sh，去掉 ffmpeg.min.js 里指向 unpkg CDN 的默认 corePath ——
+node tools/patch-ffmpeg.js
+
 cp manifest.json content.js background.js offscreen.js offscreen.html \
    popup.html popup.js popup.css rules.json "$STAGE/"
-cp lib/ffmpeg/* "$STAGE/lib/ffmpeg/"
+cp lib/ffmpeg/*.js lib/ffmpeg/*.wasm "$STAGE/lib/ffmpeg/"
 cp icons/icon16.png icons/icon48.png icons/icon128.png "$STAGE/icons/"
 
 rm -f "$OUT"
